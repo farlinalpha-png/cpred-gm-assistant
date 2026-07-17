@@ -12,7 +12,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/PLACEHOLDER_OWNER/PLACEHOLDER_REPO.git"
+    "url": "https://github.com/farlinalpha-png/cpred-gm-assistant.git"
   },
   "build": {
     "appId": "com.nightcity.cpred-assistant",
@@ -22,8 +22,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "PLACEHOLDER_OWNER",
-      "repo": "PLACEHOLDER_REPO"
+      "owner": "farlinalpha-png",
+      "repo": "cpred-gm-assistant"
     },
     "win": {
       "target": [
