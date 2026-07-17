@@ -1,10 +1,14 @@
 // CP:RED Player Companion — player.js
+// Character flow mirrors the GM app's Characters section:
+// creation method chooser (Pre-Generated / Template / Full Custom),
+// Identity / Stats & Skills / Lifepath / Full Sheet sections.
 let chars = JSON.parse(localStorage.getItem('cpp_chars') || '[]');
 let cur = null;
 let gmAddr = localStorage.getItem('cpp_gm') || '';
 let connected = false;
 let eqTab = 'weapons';
 let syncTimer = null;
+let charSub = 'identity';
 
 const EQ_TABS = [
   ['weapons', 'Weapons'], ['armorList', 'Armor'], ['cyberware', 'Cyberware'],
@@ -21,6 +25,22 @@ const CUSTOM_FIELDS = {
   vehicles: [['name','Name'],['sdp','SDP'],['sp','SP'],['seats','Seats'],['cost','Cost (eb)'],['description','Notes']]
 };
 
+// Same lifepath field list as the GM app's full sheet
+const LIFEPATH_DEFS = [
+  { key: 'culturalOrigins', label: 'Cultural Origins', options: 'culturalOrigins' },
+  { key: 'personality', label: 'Personality', options: 'personalities' },
+  { key: 'clothingStyle', label: 'Clothing Style', options: 'clothingStyles' },
+  { key: 'hairStyle', label: 'Hairstyle', options: 'hairStyles' },
+  { key: 'valueMost', label: 'What You Value Most', options: 'valueMost' },
+  { key: 'feelingsPeople', label: 'Feelings About People', options: 'feelingsAboutPeople' },
+  { key: 'mostValuedPerson', label: 'Most Valued Person', free: true },
+  { key: 'mostValuedPossession', label: 'Most Valued Possession', free: true },
+  { key: 'familyBackground', label: 'Family Background', options: 'familyBackground' },
+  { key: 'childhoodEnv', label: 'Childhood Environment', options: 'childhoodEnvironment' },
+  { key: 'familyCrisis', label: 'Family Crisis', free: true },
+  { key: 'lifeGoals', label: 'Life Goals', free: true }
+];
+
 function notify(msg, err) {
   const n = document.createElement('div');
   n.className = 'notif' + (err ? ' err' : '');
@@ -31,10 +51,22 @@ function notify(msg, err) {
 
 function blank() {
   return { id: String(Date.now()), name: 'New Edgerunner', handle: '', role: 'Solo',
+    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    skills: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '',
+    skills: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
     weapons: [], armorList: [], armor: { head:'', headSP:0, body:'', bodySP:0, shield:'', shieldSP:0 },
     cyberware: [], gear: [], netPrograms: [], vehicles: [], updatedAt: Date.now() };
+}
+
+// Fill in anything missing on imported / synced / older characters
+function normalize(c) {
+  const b = blank();
+  Object.keys(b).forEach(k => { if (c[k] === undefined || c[k] === null) c[k] = b[k]; });
+  ['weapons','armorList','cyberware','gear','netPrograms','vehicles'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
+  if (typeof c.skills !== 'object' || Array.isArray(c.skills)) c.skills = {};
+  if (typeof c.lifepath !== 'object') c.lifepath = {};
+  if (typeof c.armor !== 'object') c.armor = b.armor;
+  return c;
 }
 
 function save() {
@@ -49,9 +81,38 @@ function go(s, el) {
   document.querySelectorAll('.section').forEach(x => x.classList.remove('active'));
   document.getElementById('s-' + s).classList.add('active');
   if (s === 'equip') renderEquip();
+  if (s === 'char' && cur) renderCharSub();
 }
 
-// ── Character management ─────────────────────────────────────────────
+// ── Effective stats / humanity (ported from the GM app) ──────────────
+function effStats(c) {
+  const eff = { ...c.stats };
+  const notes = [];
+  (c.cyberware || []).concat(c.gear || []).forEach(item => {
+    const mod = CPRED_DATA.itemMods[item.name];
+    if (!mod) return;
+    CPRED_DATA.stats.forEach(s => {
+      if (mod[s]) {
+        eff[s] = (eff[s] || 5) + mod[s];
+        if (mod.cap) eff[s] = Math.min(eff[s], mod.cap);
+        notes.push(`${item.name}: +${mod[s]} ${s}`);
+      }
+    });
+    if (mod.skillNote) notes.push(`${item.name}: ${mod.skillNote}`);
+    if (mod.note) notes.push(`${item.name}: ${mod.note}`);
+  });
+  return { eff, notes };
+}
+
+function totalHL(c) {
+  let t = 0;
+  (c.cyberware || []).forEach(cw => { const m = String(cw.hl || '').match(/\d+/); if (m) t += parseInt(m[0]); });
+  return t;
+}
+
+function curHumanity(c) { return Math.max(0, ((c.stats.EMP || 5) * 10) - totalHL(c)); }
+
+// ── Character list ───────────────────────────────────────────────────
 function renderCharList() {
   const el = document.getElementById('char-list');
   el.innerHTML = chars.length ? chars.map((c, i) => `
@@ -63,52 +124,408 @@ function renderCharList() {
     '<div style="font-family:Share Tech Mono,monospace;font-size:10px;color:var(--dim)">No characters yet — create or import one</div>';
 }
 
-function newChar() { cur = blank(); chars.push(cur); save(); renderCharList(); fillEditor(); }
-function openChar(i) { cur = chars[i]; renderCharList(); fillEditor(); }
+// ── Creation chooser (mirrors GM wizard: Method → Pregen / Role) ─────
+function newChar() {
+  document.getElementById('char-view').style.display = 'none';
+  document.getElementById('create-chooser').style.display = 'block';
+  renderChooserMethod();
+}
+
+function renderChooserMethod() {
+  document.getElementById('chooser-body').innerHTML = `
+    <div class="grid3">
+      <div class="method-card" onclick="chooserPregens()">
+        <div class="m-title">Pre-Generated</div>
+        <div class="m-desc">Choose from ${CPRED_DATA.pregens.length} ready-to-play edgerunners with full stats, gear and backstory hooks</div>
+      </div>
+      <div class="method-card" onclick="chooserTemplates()">
+        <div class="m-title">Template</div>
+        <div class="m-desc">Choose a role and get recommended stats, core skills and starting gear. Customize from there</div>
+      </div>
+      <div class="method-card" onclick="createCustom()">
+        <div class="m-title">Full Custom</div>
+        <div class="m-desc">Build your character from scratch — total control over every stat, skill and detail</div>
+      </div>
+    </div>`;
+}
+
+function chooserPregens() {
+  document.getElementById('chooser-body').innerHTML = `
+    <div class="grid3">
+      ${CPRED_DATA.pregens.map((p, i) => `
+        <div class="pick-card" onclick="createFromPregen(${i})">
+          <div class="p-name">${p.name}</div>
+          <div class="p-sub">${p.role} · "${p.handle}"</div>
+          <div class="p-desc">${p.concept || ''}</div>
+        </div>`).join('')}
+    </div>
+    <button class="btn btn-ghost btn-xs" style="margin-top:10px" onclick="renderChooserMethod()">← Back</button>`;
+}
+
+function chooserTemplates() {
+  document.getElementById('chooser-body').innerHTML = `
+    <div class="grid3">
+      ${Object.entries(CPRED_DATA.templates).map(([role, t]) => `
+        <div class="pick-card" onclick="createFromTemplate('${role}')">
+          <div class="p-name">${role}</div>
+          <div class="p-desc">${t.description || ''}</div>
+        </div>`).join('')}
+    </div>
+    <button class="btn btn-ghost btn-xs" style="margin-top:10px" onclick="renderChooserMethod()">← Back</button>`;
+}
+
+function finishCreate(c) {
+  cur = normalize(c);
+  chars.push(cur);
+  save();
+  document.getElementById('create-chooser').style.display = 'none';
+  renderCharList();
+  openCharView('identity');
+}
+
+function createCustom() { finishCreate(blank()); }
+
+function createFromPregen(i) {
+  const p = CPRED_DATA.pregens[i];
+  const c = { ...blank(), ...p, id: String(Date.now()),
+    maxHp: p.hp,
+    skills: Object.fromEntries((p.skills || []).map(s => [s.name, s.lvl])),
+    gear: (p.gear || []).map(g => ({ name: g, qty: 1 }))
+  };
+  finishCreate(c);
+  notify('Created from pregen: ' + p.name);
+}
+
+function createFromTemplate(role) {
+  const t = CPRED_DATA.templates[role];
+  const c = { ...blank(), role, stats: { ...t.recommendedStats } };
+  c.hp = c.maxHp = 10 + 5 * (c.stats.BODY || 5);
+  c.eddies = t.startingEddies || 500;
+  (t.coreSkills || []).forEach(s => c.skills[s] = 4);
+  c.gear = (t.startingGear || []).map(g => ({ name: g, qty: 1 }));
+  finishCreate(c);
+  notify(role + ' template — tweak stats and skills to taste');
+}
+
+// ── Open-character view with GM-style sections ───────────────────────
+function openChar(i) { cur = normalize(chars[i]); renderCharList(); openCharView(charSub); }
+
+function openCharView(sub) {
+  document.getElementById('create-chooser').style.display = 'none';
+  document.getElementById('char-view').style.display = 'block';
+  const btn = document.querySelector(`#char-subtabs [data-t="${sub || 'identity'}"]`);
+  subGo(sub || 'identity', btn);
+}
+
+function subGo(t, el) {
+  charSub = t;
+  document.querySelectorAll('#char-subtabs .subtab').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.querySelectorAll('#char-view .sub').forEach(x => x.classList.remove('active'));
+  document.getElementById('sub-' + t).classList.add('active');
+  renderCharSub();
+}
+
+function renderCharSub() {
+  if (!cur) return;
+  document.getElementById('eq-char-name').textContent = cur.name || 'Unnamed';
+  if (charSub === 'identity') fillIdentity();
+  if (charSub === 'stats') renderStatsSkills();
+  if (charSub === 'lifepath') renderLifepath();
+  if (charSub === 'sheet') renderSheet();
+}
+
+function F(field, val) { if (!cur) return; cur[field] = val; save(); renderCharList(); if (field === 'role') fillRoleBlurb(); }
+
+function fillIdentity() {
+  document.getElementById('c-name').value = cur.name || '';
+  document.getElementById('c-handle').value = cur.handle || '';
+  document.getElementById('c-role').value = cur.role || 'Solo';
+  document.getElementById('c-rank').value = cur.roleAbilityRank || 4;
+  document.getElementById('c-age').value = cur.age || 25;
+  document.getElementById('c-rep').value = cur.rep || 0;
+  document.getElementById('c-eddies').value = cur.eddies || 0;
+  document.getElementById('c-gender').value = cur.gender || '';
+  document.getElementById('c-aliases').value = cur.aliases || '';
+  document.getElementById('c-notes').value = cur.notes || '';
+  fillRoleBlurb();
+}
+
+function fillRoleBlurb() {
+  const det = CPRED_DATA.roleAbilityDetails[cur.role] || {};
+  document.getElementById('role-ability-blurb').innerHTML = det.name ?
+    `<span class="badge badge-gold">${det.name}</span> ${det.how || ''}` : '';
+}
+
+// ── Stats & Skills (full grid, like the GM app) ──────────────────────
+function renderStatsSkills() {
+  const { eff } = effStats(cur);
+  const hp = 10 + 5 * (eff.BODY || 5);
+  document.getElementById('sub-stats-body').innerHTML = `
+    <div class="grid5" style="margin-bottom:8px">
+      ${CPRED_DATA.stats.map(s => {
+        const b = cur.stats[s] || 5, e = eff[s] || b;
+        return `<div class="stat-box"><div class="stat-lbl">${s}</div>
+          <input type="number" min="1" max="10" value="${b}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:var(--neon);padding:4px 2px"
+            onchange="cur.stats['${s}']=+this.value;save();renderStatsSkills()">
+          ${e !== b ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--green)">eff ${e}</div>` : ''}</div>`;
+      }).join('')}
+    </div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:12px">
+      HP ${hp} · Seriously Wounded ${Math.ceil(hp / 2)} · Death Save ${eff.BODY || 5} · Humanity ${curHumanity(cur)}/${(cur.stats.EMP || 5) * 10}
+    </div>
+    <div class="grid3">
+      ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
+        <div><div class="skill-cat">${cat}</div>
+          ${skills.map(sk => {
+            const lvl = cur.skills[sk.name] || 0;
+            const base = (eff[sk.stat] || 5) + lvl;
+            return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
+              <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+              <span style="display:flex;align-items:center;gap:4px">
+                <input type="number" min="0" max="10" value="${lvl}" style="width:38px;text-align:center;font-size:10px;padding:2px"
+                  onchange="setSkill('${sk.name.replace(/'/g, "\\'")}', this.value)">
+                <span style="color:var(--gold);min-width:22px;text-align:right">${lvl > 0 ? base : '—'}</span>
+              </span></div>`;
+          }).join('')}</div>`).join('')}
+    </div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">BASE = effective STAT + level. Skills marked (x2) cost double at creation.</div>`;
+}
+
+function setSkill(name, v) {
+  const n = parseInt(v) || 0;
+  if (n <= 0) delete cur.skills[name]; else cur.skills[name] = n;
+  save(); renderStatsSkills();
+}
+
+// ── Lifepath (same tables + dice as the GM app) ──────────────────────
+function renderLifepath() {
+  document.getElementById('sub-lifepath-body').innerHTML = LIFEPATH_DEFS.map(d => {
+    const val = cur.lifepath[d.key] || '';
+    if (d.free) return `<div class="lp-item">
+      <div class="lp-label">${d.label}</div>
+      <input value="${String(val).replace(/"/g, '&quot;')}" oninput="cur.lifepath['${d.key}']=this.value;save()">
+    </div>`;
+    const opts = CPRED_DATA.lifepath[d.options] || [];
+    return `<div class="lp-item">
+      <div class="lp-label">${d.label}</div>
+      <div style="display:flex;gap:6px">
+        <select style="flex:1" onchange="cur.lifepath['${d.key}']=this.value;save()">
+          <option value="">— Select —</option>
+          ${opts.map(o => `<option ${o === val ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost btn-xs" onclick="rollLifepath('${d.key}','${d.options}')">🎲</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function rollLifepath(key, optKey) {
+  const opts = CPRED_DATA.lifepath[optKey] || [];
+  if (!opts.length) return;
+  cur.lifepath[key] = opts[Math.floor(Math.random() * opts.length)];
+  save(); renderLifepath();
+}
+
+function randomizeLifepath() {
+  LIFEPATH_DEFS.forEach(d => {
+    if (d.free) return;
+    const opts = CPRED_DATA.lifepath[d.options] || [];
+    if (opts.length) cur.lifepath[d.key] = opts[Math.floor(Math.random() * opts.length)];
+  });
+  save(); renderLifepath();
+  notify('Lifepath randomized');
+}
+
+// ── Full Sheet (mirrors the GM app's full sheet, editable) ───────────
+function setPathV(el, path, isNum) {
+  if (!cur) return;
+  const v = isNum ? (+el.value || 0) : el.value;
+  const parts = path.split('.');
+  let o = cur;
+  for (let i = 0; i < parts.length - 1; i++) { if (!o[parts[i]]) o[parts[i]] = {}; o = o[parts[i]]; }
+  o[parts[parts.length - 1]] = v;
+  save(); renderCharList();
+}
+
+function edI(path, val, opts = {}) {
+  return `<input type="${opts.num ? 'number' : 'text'}" class="ed-inline" value="${String(val ?? '').replace(/"/g, '&quot;')}"
+    style="width:${opts.w || '110px'};${opts.center ? 'text-align:center;' : ''}${opts.color ? 'color:' + opts.color + ';' : ''}${opts.fs ? 'font-size:' + opts.fs + ';' : ''}"
+    oninput="setPathV(this,'${path}',${!!opts.num})">`;
+}
+
+function renderSheet() {
+  const el = document.getElementById('sub-sheet');
+  const { eff, notes } = effStats(cur);
+  const hp = 10 + 5 * (eff.BODY || 5);
+  const hl = totalHL(cur);
+  const hum = curHumanity(cur);
+  const det = CPRED_DATA.roleAbilityDetails[cur.role] || {};
+
+  el.innerHTML = `
+    <div class="cs-section" style="border-color:var(--neon)">
+      <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+        ${cur.portrait ?
+          `<img src="${cur.portrait}" style="width:100px;height:100px;object-fit:cover;border:2px solid var(--neon);border-radius:4px;cursor:pointer" title="Click to change" onclick="document.getElementById('portrait-inp').click()">` :
+          `<div onclick="document.getElementById('portrait-inp').click()" style="cursor:pointer;width:100px;height:100px;border:2px solid var(--border);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:30px" title="Click to add portrait">◈</div>`}
+        <input type="file" id="portrait-inp" accept="image/*" style="display:none" onchange="pickPortrait(this)">
+        <div style="flex:1;min-width:220px">
+          <div style="font-family:'Orbitron',monospace;font-size:18px;font-weight:700;color:var(--neon)">${edI('name', cur.name, { w: '250px', color: 'var(--neon)', fs: '16px' })}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--muted);margin:4px 0">
+            "${edI('handle', cur.handle, { w: '120px' })}" ·
+            <select style="width:auto;display:inline-block;padding:2px 6px;font-size:12px;color:var(--gold)" onchange="cur.role=this.value;save();renderSheet()">
+              ${CPRED_DATA.roles.map(r => `<option ${r === cur.role ? 'selected' : ''}>${r}</option>`).join('')}
+            </select>
+          </div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);line-height:2.2">
+            Age: ${edI('age', cur.age, { num: true, w: '46px', center: true })} |
+            Rep: ${edI('rep', cur.rep || 0, { num: true, w: '40px', center: true })} |
+            Eddies: €$ ${edI('eddies', cur.eddies || 0, { num: true, w: '80px', color: 'var(--gold)' })} |
+            Aliases: ${edI('aliases', cur.aliases || '', { w: '140px' })}
+          </div>
+          <div style="margin-top:6px">
+            <span class="badge badge-gold">${det.name || '—'} Rank ${edI('roleAbilityRank', cur.roleAbilityRank || 4, { num: true, w: '32px', center: true, color: 'var(--gold)' })}</span>
+            <span class="badge badge-red">HL: ${hl} (auto)</span>
+            <span class="badge badge-neon">Humanity: ${hum}/${(cur.stats.EMP || 5) * 10}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    ${notes.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold)">Equipment modifiers active: ${notes.join(' · ')}</div>` : ''}
+
+    <div class="cs-section">
+      <div class="cs-title">Stats (base — effective shown when modified)</div>
+      <div class="grid5" style="margin-bottom:10px">
+        ${CPRED_DATA.stats.map(s => {
+          const b = cur.stats[s] || 5, e = eff[s] || b;
+          return `<div class="stat-box"><div class="stat-lbl">${s}</div>
+            <input type="number" min="1" max="10" value="${b}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:var(--neon);padding:4px 2px" onchange="cur.stats['${s}']=+this.value;save();renderSheet()">
+            ${e !== b ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--green)">eff ${e}</div>` : ''}</div>`;
+        }).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        <div class="stat-box"><div class="stat-lbl">HP (auto)</div><div style="font-family:Orbitron,monospace;font-size:15px;font-weight:700">${hp}</div></div>
+        <div class="stat-box"><div class="stat-lbl">Current HP</div><div>${edI('hp', cur.hp !== undefined ? cur.hp : hp, { num: true, w: '50px', center: true, color: 'var(--neon)', fs: '15px' })}</div></div>
+        <div class="stat-box"><div class="stat-lbl">Death Save</div><div style="font-family:Orbitron,monospace;font-size:15px;font-weight:700">${eff.BODY || 5}</div></div>
+        <div class="stat-box"><div class="stat-lbl">Humanity</div><div style="font-family:Orbitron,monospace;font-size:15px;font-weight:700;color:${hum < 20 ? 'var(--red)' : 'var(--neon)'}">${hum}</div></div>
+      </div>
+    </div>
+
+    <div class="cs-section">
+      <div class="cs-title">Weapons &amp; Armor (editable)</div>
+      ${(cur.weapons || []).length ? cur.weapons.map((w, i) => `
+        <div style="background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:7px 10px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-family:'Orbitron',monospace;font-size:10px;color:var(--neon)">${w.name}</div>
+            <button class="btn btn-red btn-xs" onclick="cur.weapons.splice(${i},1);save();renderSheet()">✕</button>
+          </div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted)">DMG: ${w.damage || '—'} | ROF: ${w.rof || '—'} |
+            Ammo: ${edI('weapons.' + i + '.ammo', w.ammo || '', { w: '70px', fs: '9px' })} |
+            Notes: ${edI('weapons.' + i + '.notes', w.notes || '', { w: '120px', fs: '9px' })}</div>
+          ${(w.upgrades || []).length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px">◆ ${w.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '')).join(' · ')}</div>` : ''}
+        </div>`).join('') : '<div style="color:var(--dim);font-size:10px;font-family:Share Tech Mono,monospace">No weapons — add from the Equipment tab</div>'}
+      <div style="border-top:1px solid var(--border);margin:8px 0"></div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:2.4">
+        Head: ${edI('armor.head', cur.armor.head || '', { w: '130px' })} SP ${edI('armor.headSP', cur.armor.headSP || 0, { num: true, w: '36px', center: true })}<br>
+        Body: ${edI('armor.body', cur.armor.body || '', { w: '130px' })} SP ${edI('armor.bodySP', cur.armor.bodySP || 0, { num: true, w: '36px', center: true })}<br>
+        Shield: ${edI('armor.shield', cur.armor.shield || '', { w: '130px' })} SP ${edI('armor.shieldSP', cur.armor.shieldSP || 0, { num: true, w: '36px', center: true })}
+      </div>
+    </div>
+
+    <div class="cs-section">
+      <div class="cs-title">Skills — every level editable (BASE uses effective stats)</div>
+      <div class="grid3">
+        ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
+          <div><div class="skill-cat">${cat}</div>
+            ${skills.map(sk => {
+              const lvl = cur.skills[sk.name] || 0;
+              const base = (eff[sk.stat] || 5) + lvl;
+              return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
+                <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+                <span style="display:flex;align-items:center;gap:4px">
+                  <input type="number" min="0" max="10" value="${lvl}" style="width:36px;text-align:center;font-size:10px;padding:1px"
+                    onchange="setSkillSheet('${sk.name.replace(/'/g, "\\'")}', this.value)">
+                  <span style="color:var(--gold);min-width:22px;text-align:right">${lvl > 0 ? base : '—'}</span>
+                </span></div>`;
+            }).join('')}</div>`).join('')}
+      </div>
+    </div>
+
+    <div class="cs-section">
+      <div class="cs-title">Role Ability: ${det.name || '—'}</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#b0b0c8;line-height:1.8">${det.how || ''}</div>
+      ${det.ranks ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);line-height:1.7;margin-top:6px">${det.ranks}</div>` : ''}
+    </div>
+
+    ${(cur.cyberware || []).length ? `<div class="cs-section">
+      <div class="cs-title">Cyberware — Total HL: ${hl} → Humanity ${hum}/${(cur.stats.EMP || 5) * 10} (auto-calculated)</div>
+      <div class="grid3">
+        ${cur.cyberware.map((c, i) => `<div style="background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:7px 10px;position:relative">
+          <button class="btn btn-red btn-xs" style="position:absolute;top:4px;right:4px" onclick="cur.cyberware.splice(${i},1);save();renderSheet()">✕</button>
+          <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon);padding-right:24px">${c.name}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl || '—'}${CPRED_DATA.itemMods[c.name] ? ' · ' + (CPRED_DATA.itemMods[c.name].skillNote || CPRED_DATA.itemMods[c.name].note || 'stat mod') : ''}</div>
+          ${(c.upgrades || []).length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px;padding-right:24px">◆ ${c.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '')).join(' · ')}</div>` : ''}
+        </div>`).join('')}</div></div>` : ''}
+
+    ${(cur.vehicles || []).length ? `<div class="cs-section">
+      <div class="cs-title">Vehicles (SDP editable)</div>
+      ${cur.vehicles.map((v, i) => `<div style="background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:7px 10px;margin-bottom:6px">
+        <div style="font-family:'Orbitron',monospace;font-size:10px;color:var(--neon)">${v.name}</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted)">SDP ${edI('vehicles.' + i + '.curSDP', v.curSDP !== undefined ? v.curSDP : v.sdp, { num: true, w: '44px', center: true, fs: '9px' })}/${v.sdp || '—'} | SP ${v.sp || '—'} | Seats ${v.seats || '—'}${(v.upgrades || []).length ? ' | ◆ ' + v.upgrades.map(u => u.name).join(', ') : ''}</div>
+      </div>`).join('')}</div>` : ''}
+
+    <div class="cs-section">
+      <div class="cs-title">Gear (quantities editable)</div>
+      ${(cur.gear || []).length ? `<div class="grid3">
+        ${cur.gear.map((g, i) => `<div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);background:var(--mid);padding:5px 8px;border-radius:3px">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.name}</span>
+          <span style="display:flex;gap:4px;align-items:center;flex-shrink:0">
+            ${edI('gear.' + i + '.qty', g.qty || 1, { num: true, w: '34px', center: true, color: 'var(--gold)', fs: '10px' })}
+            <button class="btn btn-red btn-xs" onclick="cur.gear.splice(${i},1);save();renderSheet()">✕</button>
+          </span></div>`).join('')}</div>` : '<div style="color:var(--dim);font-size:10px;font-family:Share Tech Mono,monospace">No gear</div>'}
+    </div>
+
+    ${(cur.netPrograms || []).length ? `<div class="cs-section">
+      <div class="cs-title">Netrunning Programs</div>
+      <div class="grid3">
+        ${cur.netPrograms.map(p => `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);background:var(--mid);padding:5px 8px;border-radius:3px">${p.name}${p.damage ? ' · ' + p.damage : ''}</div>`).join('')}</div></div>` : ''}
+
+    <div class="cs-section">
+      <div class="cs-title">Lifepath (all editable)</div>
+      <div class="grid2">
+        ${LIFEPATH_DEFS.map(d => `<div class="lp-item">
+          <div class="lp-label">${d.label}</div>
+          <input value="${String(cur.lifepath[d.key] || '').replace(/"/g, '&quot;')}" style="font-size:12px" oninput="cur.lifepath['${d.key}']=this.value;save()">
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="cs-section">
+      <div class="cs-title">Notes (editable)</div>
+      <textarea style="min-height:70px;font-family:'Share Tech Mono',monospace;font-size:11px" oninput="cur.notes=this.value;save()">${cur.notes || ''}</textarea>
+    </div>`;
+}
+
+function setSkillSheet(name, v) {
+  const n = parseInt(v) || 0;
+  if (n <= 0) delete cur.skills[name]; else cur.skills[name] = n;
+  save(); renderSheet();
+}
+
+function pickPortrait(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = e => { cur.portrait = e.target.result; save(); renderSheet(); };
+  r.readAsDataURL(f);
+}
+
+// ── Delete / export / import / upload ────────────────────────────────
 function delChar() {
   if (!cur) return;
   chars = chars.filter(c => c.id !== cur.id); cur = null;
   save(); renderCharList();
-  document.getElementById('char-editor').style.display = 'none';
-}
-
-function fillEditor() {
-  if (!cur) return;
-  document.getElementById('char-editor').style.display = 'block';
-  document.getElementById('c-name').value = cur.name || '';
-  document.getElementById('c-handle').value = cur.handle || '';
-  document.getElementById('c-role').value = cur.role || 'Solo';
-  document.getElementById('c-eddies').value = cur.eddies || 0;
-  document.getElementById('c-notes').value = cur.notes || '';
-  document.getElementById('c-skills').value = Object.entries(cur.skills || {}).map(([k,v]) => k + ': ' + v).join(', ');
-  document.getElementById('eq-char-name').textContent = cur.name || 'Unnamed';
-  renderStats(); renderDerived();
-}
-
-function F(field, val) { if (!cur) return; cur[field] = val; save(); renderCharList(); }
-
-function renderStats() {
-  document.getElementById('stat-grid').innerHTML = CPRED_DATA.stats.map(s => `
-    <div class="stat-box"><div class="stat-lbl">${s}</div>
-    <input type="number" min="1" max="10" value="${cur.stats[s]||5}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:var(--neon);padding:4px 2px"
-    oninput="cur.stats['${s}']=+this.value;save();renderDerived()"></div>`).join('');
-}
-
-function renderDerived() {
-  const hp = 10 + 5 * (cur.stats.BODY || 5);
-  cur.maxHp = hp;
-  document.getElementById('derived').textContent =
-    `HP ${hp} · Seriously Wounded ${Math.ceil(hp/2)} · Death Save ${cur.stats.BODY||5} · Humanity ${(cur.stats.EMP||5)*10}`;
-}
-
-function skillsFromText(txt) {
-  if (!cur) return;
-  cur.skills = {};
-  txt.split(',').forEach(p => {
-    const m = p.split(':');
-    if (m.length === 2 && m[0].trim()) cur.skills[m[0].trim()] = parseInt(m[1]) || 0;
-  });
-  save();
+  document.getElementById('char-view').style.display = 'none';
 }
 
 function exportChar() {
@@ -125,10 +542,9 @@ function importChar(inp) {
   const r = new FileReader();
   r.onload = e => {
     try {
-      const c = JSON.parse(e.target.result);
+      const c = normalize(JSON.parse(e.target.result));
       if (!c.id) c.id = String(Date.now());
-      ['weapons','armorList','cyberware','gear','netPrograms','vehicles'].forEach(k => { if (!c[k]) c[k] = []; });
-      chars.push(c); cur = c; save(); renderCharList(); fillEditor();
+      chars.push(c); cur = c; save(); renderCharList(); openCharView('sheet');
       notify('Imported: ' + c.name);
     } catch (err) { notify('Invalid file', true); }
   };
@@ -179,44 +595,12 @@ function renderOwned() {
     '<div style="font-family:Share Tech Mono,monospace;font-size:10px;color:var(--dim)">Nothing equipped — browse the database or add a custom item</div>';
 }
 
-// Upgrade/option sources per equipment type
-function upgradeSource() {
-  if (eqTab === 'vehicles') return CPRED_DATA.vehicleUpgrades.map(u => ({ name: u.name, effect: u.effect, cost: u.cost }));
-  if (eqTab === 'weapons') return CPRED_DATA.weaponAttachments.map(a => ({ name: a.name, effect: a.effect, cost: a.cost }));
-  if (eqTab === 'cyberware') {
-    // options = all cyberware entries (the player picks which option fits their foundation)
-    return Object.values(CPRED_DATA.cyberware).flat().map(c => ({ name: c.name, effect: (c.description||'').slice(0,80), cost: c.cost }));
-  }
-  if (eqTab === 'armorList') return [
-    { name: 'Reinforced Plating', effect: '+1 SP (GM approval)', cost: '500eb' },
-    { name: 'Concealed Pockets', effect: 'Hidden storage, DV15 to spot', cost: '100eb' },
-    { name: 'Style Upgrade', effect: '+1 Wardrobe & Style while worn', cost: '100eb' }
-  ];
-  return [];
-}
-
-function showUpgradePicker(i) {
-  const el = document.getElementById('upg-picker-' + i);
-  if (el.style.display === 'block') { el.style.display = 'none'; return; }
-  const src = upgradeSource();
-  el.style.display = 'block';
-  el.innerHTML = src.length ? `
-    <input placeholder="Filter upgrades..." style="margin-bottom:5px" oninput="filterUpg(${i}, this.value)">
-    <div id="upg-list-${i}" style="max-height:180px;overflow-y:auto">${upgRows(i, src)}</div>` :
-    '<div style="font-family:Share Tech Mono,monospace;font-size:9px;color:var(--dim)">No database upgrades for this type — use Add Other Upgrade</div>';
-}
-
 function upgRows(i, src) {
   return src.map(u => `
     <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:5px 8px;margin-bottom:3px">
       <span style="font-family:'Share Tech Mono',monospace;font-size:9px"><span style="color:var(--neon)">${u.name}</span> <span style="color:var(--dim)">${u.effect||''} ${u.cost?'· '+u.cost:''}</span></span>
       <button class="btn btn-gold btn-xs" onclick='attachUpgrade(${i}, ${JSON.stringify(JSON.stringify(u))})'>Add</button>
     </div>`).join('');
-}
-
-function filterUpg(i, q) {
-  const src = upgradeSource().filter(u => !q || u.name.toLowerCase().includes(q.toLowerCase()));
-  document.getElementById('upg-list-' + i).innerHTML = upgRows(i, src);
 }
 
 function attachUpgrade(i, uStr) {
@@ -226,17 +610,6 @@ function attachUpgrade(i, uStr) {
   it.upgrades.push({ name: u.name, effect: u.effect || '' });
   save(); renderOwned();
   notify('Added ' + u.name);
-}
-
-function addCustomUpgrade(i) {
-  const name = prompt('Upgrade / option name (e.g. Stealth Coating):');
-  if (!name) return;
-  const effect = prompt('Effect / notes (optional):') || '';
-  const it = ownedList()[i];
-  if (!it.upgrades) it.upgrades = [];
-  it.upgrades.push({ name, effect, custom: true });
-  save(); renderOwned();
-  notify('Custom upgrade added');
 }
 
 // Browse database
@@ -369,8 +742,8 @@ function startSync() {
       (d.pcs || []).forEach(gmChar => {
         const i = chars.findIndex(c => String(c.id) === String(gmChar.id));
         if (i >= 0 && (gmChar.updatedAt || 0) > (chars[i].updatedAt || 0)) {
-          chars[i] = gmChar; changed = true;
-          if (cur && cur.id === gmChar.id) { cur = gmChar; fillEditor(); }
+          chars[i] = normalize(gmChar); changed = true;
+          if (cur && cur.id === gmChar.id) { cur = chars[i]; renderCharSub(); }
         }
       });
       if (changed) { localStorage.setItem('cpp_chars', JSON.stringify(chars)); renderCharList(); renderOwned && renderOwned(); }
@@ -405,7 +778,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (gmAddr) { document.getElementById('gm-addr').value = gmAddr; connectGMQuiet().then(() => { if (connected) startSync(); }); }
 });
 
-// ── v3.2 fixes: foundation-filtered cyberware options + inline Add Other ──
+// ── Cyberware options: foundation-filtered (matches GM app) ──────────
 const CW_FOUNDATIONS_P = [
   ['Neural Link', /neural link/i], ['Cybereye', /cybereye|smart lens/i],
   ['Cyberaudio', /cyberaudio/i], ['Cyberarm', /cyberarm/i], ['Cyberleg', /cyberleg/i]

@@ -21,6 +21,7 @@ body{background:var(--dark);color:var(--text);font-family:'Rajdhani',sans-serif;
 .card-title{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:10px}
 input,select,textarea{background:var(--mid);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:7px 9px;font-family:'Rajdhani',sans-serif;font-size:13px;width:100%;outline:none}
 input:focus,select:focus,textarea:focus{border-color:var(--neon)}
+@media (pointer:coarse){input,select,textarea{font-size:16px}}
 label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-family:'Share Tech Mono',monospace;display:block;margin-bottom:3px}
 .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:4px;font-family:'Orbitron',monospace;font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;border:none}
 .btn-primary{background:var(--neon);color:var(--dark)}
@@ -30,7 +31,9 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
 .btn-gold{background:rgba(255,214,0,0.15);color:var(--gold);border:1px solid rgba(255,214,0,0.4)}
 .btn-xs{padding:3px 7px;font-size:7px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+@media (max-width:700px){.grid3{grid-template-columns:1fr}.grid5{grid-template-columns:repeat(2,1fr)}}
 .stat-box{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:6px 4px;text-align:center}
 .stat-lbl{font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--muted);text-transform:uppercase}
 .gear-item{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:6px}
@@ -45,9 +48,29 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
 .upgrade-row{background:rgba(255,214,0,0.05);border-left:2px solid var(--gold);padding:4px 8px;margin:3px 0 3px 12px;font-family:'Share Tech Mono',monospace;font-size:10px;color:#c0b060;display:flex;justify-content:space-between;align-items:center}
 .output-box{background:var(--mid);border:1px solid var(--border);border-left:3px solid var(--neon);border-radius:4px;padding:12px;font-family:'Share Tech Mono',monospace;font-size:11px;line-height:1.8;color:#b0b0c8;white-space:pre-wrap}
 .section{display:none}.section.active{display:block}
+.sub{display:none}.sub.active{display:block}
 .notif{position:fixed;top:56px;right:12px;z-index:99;background:var(--surface);border:1px solid var(--green);border-radius:6px;padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--green)}
 .notif.err{border-color:var(--red);color:var(--red)}
 .custom-form{background:rgba(0,229,255,0.04);border:1px dashed var(--neon);border-radius:4px;padding:10px;margin-top:8px}
+/* Creation chooser (mirrors GM wizard step 1) */
+.method-card{background:var(--mid);border:1px solid var(--border);border-radius:6px;padding:14px;cursor:pointer;text-align:center}
+.method-card:hover{border-color:var(--neon)}
+.method-card .m-title{font-family:'Orbitron',monospace;font-size:11px;color:var(--neon);margin-bottom:6px}
+.method-card .m-desc{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);line-height:1.6}
+.pick-card{background:var(--mid);border:1px solid var(--border);border-radius:6px;padding:12px;cursor:pointer}
+.pick-card:hover{border-color:var(--neon)}
+.pick-card .p-name{font-family:'Orbitron',monospace;font-size:11px;color:var(--neon)}
+.pick-card .p-sub{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);margin:2px 0}
+.pick-card .p-desc{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);line-height:1.5}
+/* Full sheet (mirrors GM app cs-section) */
+.cs-section{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:12px}
+.cs-title{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.ed-inline{background:transparent;border:none;border-bottom:1px dashed var(--border);border-radius:0;color:var(--text);padding:1px 3px;font-family:inherit;width:auto}
+.ed-inline:focus{border-bottom-color:var(--neon)}
+.skill-row{display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;padding:2px 0;border-bottom:1px solid rgba(42,42,69,0.4)}
+.skill-cat{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin:8px 0 4px}
+.lp-item{margin-bottom:8px}
+.lp-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
 </style>
 </head>
 <body>
@@ -74,23 +97,61 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
     </div>
     <div id="char-list"></div>
   </div>
-  <div class="card" id="char-editor" style="display:none">
-    <div class="card-title">◈ Character Sheet <span style="color:var(--dim);font-size:8px">(auto-saves)</span></div>
-    <div class="grid2" style="margin-bottom:10px">
-      <div><label>Name</label><input id="c-name" oninput="F('name',this.value)"></div>
-      <div><label>Handle</label><input id="c-handle" oninput="F('handle',this.value)"></div>
+
+  <!-- Creation chooser (mirrors the GM wizard: Method → Pregen/Role) -->
+  <div class="card" id="create-chooser" style="display:none">
+    <div class="card-title">◈ Choose Creation Method</div>
+    <div id="chooser-body"></div>
+  </div>
+
+  <!-- Open-character view with GM-style sections -->
+  <div id="char-view" style="display:none">
+    <div class="tabs" id="char-subtabs">
+      <button class="subtab active" data-t="identity" onclick="subGo('identity',this)">Identity</button>
+      <button class="subtab" data-t="stats" onclick="subGo('stats',this)">Stats &amp; Skills</button>
+      <button class="subtab" data-t="lifepath" onclick="subGo('lifepath',this)">Lifepath</button>
+      <button class="subtab" data-t="sheet" onclick="subGo('sheet',this)">Full Sheet</button>
     </div>
-    <div class="grid2" style="margin-bottom:10px">
-      <div><label>Role</label><select id="c-role" onchange="F('role',this.value)"></select></div>
-      <div><label>Eddies (€$)</label><input type="number" id="c-eddies" oninput="F('eddies',+this.value)"></div>
+
+    <div class="card sub active" id="sub-identity">
+      <div class="card-title">◈ Identity <span style="color:var(--dim);font-size:8px">(auto-saves)</span></div>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><label>Full Name</label><input id="c-name" oninput="F('name',this.value)"></div>
+        <div><label>Street Handle</label><input id="c-handle" oninput="F('handle',this.value)"></div>
+      </div>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><label>Role</label><select id="c-role" onchange="F('role',this.value)"></select></div>
+        <div><label>Role Ability Rank (1-10)</label><input type="number" id="c-rank" min="1" max="10" oninput="F('roleAbilityRank',+this.value)"></div>
+      </div>
+      <div class="grid3" style="margin-bottom:10px">
+        <div><label>Age</label><input type="number" id="c-age" oninput="F('age',+this.value)"></div>
+        <div><label>Reputation</label><input type="number" id="c-rep" oninput="F('rep',+this.value)"></div>
+        <div><label>Eddies (€$)</label><input type="number" id="c-eddies" oninput="F('eddies',+this.value)"></div>
+      </div>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><label>Gender / Pronouns</label><input id="c-gender" oninput="F('gender',this.value)"></div>
+        <div><label>Aliases</label><input id="c-aliases" oninput="F('aliases',this.value)"></div>
+      </div>
+      <div id="role-ability-blurb" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.7;margin-bottom:10px"></div>
+      <div><label>Notes</label><textarea id="c-notes" oninput="F('notes',this.value)"></textarea></div>
     </div>
-    <label>Stats</label>
-    <div class="grid5" id="stat-grid" style="margin-bottom:10px"></div>
-    <div id="derived" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:10px"></div>
-    <label>Skills (name: level, comma separated — or edit in GM app)</label>
-    <textarea id="c-skills" style="min-height:50px" oninput="skillsFromText(this.value)"></textarea>
-    <div style="margin-top:8px"><label>Notes</label><textarea id="c-notes" oninput="F('notes',this.value)"></textarea></div>
-    <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+
+    <div class="card sub" id="sub-stats">
+      <div class="card-title">◈ Stats &amp; Skills</div>
+      <div id="sub-stats-body"></div>
+    </div>
+
+    <div class="card sub" id="sub-lifepath">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <div class="card-title" style="margin:0">◈ Lifepath</div>
+        <button class="btn btn-outline btn-xs" onclick="randomizeLifepath()">🎲 Randomize All</button>
+      </div>
+      <div id="sub-lifepath-body"></div>
+    </div>
+
+    <div class="sub" id="sub-sheet"></div>
+
+    <div style="margin:2px 0 14px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn btn-outline btn-xs" onclick="exportChar()">Export JSON</button>
       <button class="btn btn-gold btn-xs" onclick="uploadToGM()">⇧ Upload to GM</button>
       <button class="btn btn-red btn-xs" onclick="delChar()">Delete</button>
