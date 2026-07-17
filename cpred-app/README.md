@@ -28,6 +28,23 @@ A complete Cyberpunk RED tabletop RPG desktop application for Windows featuring:
 
 The installer is a standard NSIS package: choose your install directory, and uninstall cleanly from Windows Settings.
 
+## 🍎 Installing on macOS
+
+Download `CPRED-GM-Assistant-<version>-universal.dmg` from the [Releases page](https://github.com/farlinalpha-png/cpred-gm-assistant/releases), open it, and drag the app to Applications. It's a universal binary — one file works on both Intel and Apple Silicon Macs.
+
+The app isn't code-signed or notarized (no Apple Developer account), so macOS Gatekeeper will block the first launch with an "unidentified developer" warning. To open it anyway: right-click (or Control-click) the app in Applications → **Open** → **Open** again in the dialog. You only need to do this once.
+
+## 🔄 Releasing an Update
+
+The repo publishes to GitHub Releases, and the installed app checks that feed on launch via `electron-updater` (see `src/main.js`). To ship a new version:
+
+1. Bump `"version"` in `package.json`
+2. Commit, then tag and push: `git tag v3.3.0 && git push origin v3.3.0` (tag must match the version, prefixed with `v`)
+3. GitHub Actions (`.github/workflows/release.yml`) builds the Windows installer and the macOS universal dmg/zip and attaches them all to **one draft release** — this takes a few minutes since the platforms build sequentially by design (see comments in the workflow file for why)
+4. Go to the repo's **Releases** page and click **Publish release** on the draft — this is a deliberate manual gate so a bad build never auto-ships. Once published, installed copies of the app will pick it up on their next launch and prompt to restart after downloading.
+
+Windows installs are also unsigned (no code-signing cert), so Windows SmartScreen may show a "Windows protected your PC" warning on first run — click **More info → Run anyway**. The auto-update flow uses `electron-updater`'s own installer replacement, not a browser download, so it isn't affected by this.
+
 ---
 
 ## 🎮 Using the App
