@@ -1,9 +1,16 @@
 name: Release
 
 # Push a tag like v3.3.0 (matching the "version" in cpred-app/package.json) to build
-# Windows + macOS installers and attach them as a draft GitHub Release.
+# Windows + macOS installers and attach them as a single draft GitHub Release.
 # electron-updater (wired up in src/main.js) reads that release feed to auto-update
 # installed copies of the app.
+#
+# The two platform jobs run sequentially (mac then windows), not in a parallel
+# matrix. electron-builder creates the draft release on first publish and
+# appends to it on subsequent publishes if it already exists for that tag —
+# running both jobs at once causes a race where each creates its own separate
+# draft release instead of sharing one, splitting the assets across two
+# releases and breaking updates for whichever platform lands second.
 on:
   push:
     tags:
@@ -14,28 +21,37 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  build-mac:
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: cpred-app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
       - run: npm ci
+      - run: npm run publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Builds for the current runner's OS and uploads installers to a draft
-      # GitHub Release matching the tag. Go to the repo's Releases page and
-      # click "Publish release" once both platforms have uploaded to make the
-      # update visible to installed apps.
+  build-windows:
+    needs: build-mac
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cpred-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      # Builds for this runner's OS and uploads installers to the draft
+      # GitHub Release the mac job created for this tag. Go to the repo's
+      # Releases page and click "Publish release" once this finishes to make
+      # the update visible to installed apps.
       - run: npm run publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
