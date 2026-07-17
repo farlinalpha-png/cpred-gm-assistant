@@ -1,0 +1,41 @@
+name: Release
+
+# Push a tag like v3.3.0 (matching the "version" in cpred-app/package.json) to build
+# Windows + macOS installers and attach them as a draft GitHub Release.
+# electron-updater (wired up in src/main.js) reads that release feed to auto-update
+# installed copies of the app.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cpred-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # Builds for the current runner's OS and uploads installers to a draft
+      # GitHub Release matching the tag. Go to the repo's Releases page and
+      # click "Publish release" once both platforms have uploaded to make the
+      # update visible to installed apps.
+      - run: npm run publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

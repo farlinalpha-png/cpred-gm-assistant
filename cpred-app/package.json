@@ -1,0 +1,85 @@
+{
+  "name": "cpred-gm-assistant",
+  "version": "3.2.0",
+  "description": "Cyberpunk RED GM & Character Assistant",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "publish": "electron-builder --publish always",
+    "dev": "electron . --dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PLACEHOLDER_OWNER/PLACEHOLDER_REPO.git"
+  },
+  "build": {
+    "appId": "com.nightcity.cpred-assistant",
+    "productName": "CP:RED GM Assistant",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "PLACEHOLDER_OWNER",
+      "repo": "PLACEHOLDER_REPO"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CP:RED GM Assistant"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "assets/icon-512.png",
+      "category": "public.app-category.utilities",
+      "identity": null
+    },
+    "dmg": {
+      "title": "CP:RED GM Assistant ${version}"
+    },
+    "files": [
+      "src/**/*",
+      "public/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "player-app/**/*",
+      "android-app/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
+  },
+  "author": "Night City Systems",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

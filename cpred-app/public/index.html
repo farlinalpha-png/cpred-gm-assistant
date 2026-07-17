@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CP:RED GM Assistant v2.045</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="data.js"></script>
+<style>
+:root {
+  --neon:#00e5ff; --red:#ff1744; --gold:#ffd600; --green:#69f0ae;
+  --dark:#0a0a14; --mid:#12121f; --surface:#1a1a2e; --border:#2a2a45;
+  --text:#e0e0f0; --muted:#888; --dim:#444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--dark);color:var(--text);font-family:'Rajdhani',sans-serif;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--dark)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ── TOPBAR ── */
+#topbar{background:var(--mid);border-bottom:1px solid var(--border);padding:0 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;height:48px}
+.logo{font-family:'Orbitron',monospace;font-size:13px;font-weight:700;letter-spacing:3px;color:var(--neon)}
+.logo-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);margin-left:6px}
+.topnav{display:flex;gap:0;margin-left:16px}
+.topnav-item{padding:0 14px;height:48px;line-height:48px;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all 0.15s;white-space:nowrap}
+.topnav-item:hover{color:#ccc}
+.topnav-item.active{color:var(--neon);border-bottom-color:var(--neon)}
+.topbar-actions{display:flex;gap:6px;margin-left:auto}
+.tb-btn{padding:5px 12px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-family:'Orbitron',monospace;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:all 0.15s}
+.tb-btn:hover{color:var(--neon);border-color:var(--neon)}
+.tb-btn.primary{background:var(--neon);color:var(--dark);border-color:var(--neon)}
+.tb-btn.primary:hover{background:#33eaff}
+.tb-btn.danger{background:rgba(255,23,68,0.15);color:var(--red);border-color:rgba(255,23,68,0.4)}
+
+/* ── LAYOUT ── */
+#app{display:flex;flex:1;overflow:hidden}
+#sidebar{width:220px;background:var(--mid);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column}
+#main{flex:1;overflow-y:auto;padding:20px}
+.panel{display:none}.panel.active{display:block}
+
+/* ── SIDEBAR ── */
+.char-portrait{width:180px;height:180px;margin:16px auto;border:2px solid var(--border);border-radius:4px;object-fit:cover;background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative}
+.char-portrait:hover .portrait-overlay{opacity:1}
+.portrait-overlay{position:absolute;inset:0;background:rgba(0,229,255,0.2);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.2s;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--neon)}
+.char-portrait img{width:100%;height:100%;object-fit:cover}
+.char-identity{padding:8px 16px 16px;border-bottom:1px solid var(--border)}
+.char-name-display{font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:var(--neon);text-align:center}
+.char-handle-display{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);text-align:center;margin-top:2px}
+.char-role-display{text-align:center;margin-top:6px}
+.sidebar-nav{padding:8px 0;flex:1}
+.snav-section{padding:6px 16px 2px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);letter-spacing:2px;text-transform:uppercase}
+.snav-item{display:flex;align-items:center;gap:8px;padding:9px 16px;cursor:pointer;font-size:12px;font-weight:500;letter-spacing:0.5px;color:var(--muted);border-left:2px solid transparent;transition:all 0.15s;text-transform:uppercase;font-family:'Rajdhani',sans-serif}
+.snav-item:hover{color:#ccc;background:rgba(255,255,255,0.03)}
+.snav-item.active{color:var(--neon);border-left-color:var(--neon);background:rgba(0,229,255,0.05)}
+.snav-icon{font-size:14px;width:16px;text-align:center}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.8}
+
+/* ── CARDS / FORMS ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:18px;margin-bottom:14px}
+.card-title{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.form-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px}
+.form-grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-family:'Share Tech Mono',monospace}
+input,select,textarea{background:var(--mid);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:7px 9px;font-family:'Rajdhani',sans-serif;font-size:13px;width:100%;outline:none;transition:border-color 0.15s}
+input:focus,select:focus,textarea:focus{border-color:var(--neon)}
+textarea{resize:vertical;min-height:60px;line-height:1.5}
+input[type=number]{text-align:center}
+.stat-input{font-family:'Orbitron',monospace;font-size:16px;font-weight:700;color:var(--neon);text-align:center;padding:8px 4px}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:4px;font-family:'Orbitron',monospace;font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer;border:none;transition:all 0.15s;white-space:nowrap}
+.btn-primary{background:var(--neon);color:var(--dark)}.btn-primary:hover{background:#33eaff;transform:translateY(-1px)}
+.btn-primary:disabled{background:#0a3040;color:#0a5060;cursor:not-allowed;transform:none}
+.btn-outline{background:transparent;color:var(--neon);border:1px solid var(--neon)}.btn-outline:hover{background:rgba(0,229,255,0.08)}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}.btn-ghost:hover{color:#ccc;border-color:#555}
+.btn-red{background:rgba(255,23,68,0.15);color:var(--red);border:1px solid rgba(255,23,68,0.4)}.btn-red:hover{background:rgba(255,23,68,0.3)}
+.btn-gold{background:rgba(255,214,0,0.15);color:var(--gold);border:1px solid rgba(255,214,0,0.4)}.btn-gold:hover{background:rgba(255,214,0,0.25)}
+.btn-sm{padding:5px 10px;font-size:8px}
+.btn-xs{padding:3px 7px;font-size:7px}
+.actions-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+
+/* ── PANELS ── */
+.panel-header{margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.panel-title{font-family:'Orbitron',monospace;font-size:16px;font-weight:700;color:var(--neon);letter-spacing:2px}
+.panel-sub{font-size:11px;color:var(--dim);margin-top:3px;font-family:'Share Tech Mono',monospace}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;background:none;border-left:none;border-right:none;border-top:none;transition:all 0.15s}
+.tab:hover{color:#ccc}.tab.active{color:var(--neon);border-bottom-color:var(--neon)}
+
+/* ── MISC UI ── */
+.badge{display:inline-block;padding:2px 8px;border-radius:3px;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase}
+.badge-neon{background:rgba(0,229,255,0.12);color:var(--neon);border:1px solid rgba(0,229,255,0.3)}
+.badge-red{background:rgba(255,23,68,0.12);color:var(--red);border:1px solid rgba(255,23,68,0.3)}
+.badge-gold{background:rgba(255,214,0,0.12);color:var(--gold);border:1px solid rgba(255,214,0,0.3)}
+.badge-green{background:rgba(105,240,174,0.12);color:var(--green);border:1px solid rgba(105,240,174,0.3)}
+.divider{height:1px;background:var(--border);margin:14px 0}
+.section-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+.hp-bar{width:100%;height:7px;background:var(--mid);border-radius:3px;overflow:hidden;margin:4px 0}
+.hp-fill{height:100%;border-radius:3px;transition:width 0.3s}
+.output-box{background:var(--mid);border:1px solid var(--border);border-left:3px solid var(--neon);border-radius:4px;padding:14px;font-family:'Share Tech Mono',monospace;font-size:11px;line-height:1.8;color:#b0b0c8;white-space:pre-wrap;word-break:break-word;max-height:450px;overflow-y:auto}
+.loading-pulse{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* ── GEAR BROWSER ── */
+.gear-browser{display:grid;grid-template-columns:200px 1fr;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;height:500px}
+.gear-sidebar{background:var(--mid);border-right:1px solid var(--border);overflow-y:auto;padding:8px 0}
+.gear-cat{padding:8px 12px;cursor:pointer;font-size:11px;color:var(--muted);transition:all 0.1s;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:0.5px;border-left:2px solid transparent}
+.gear-cat:hover{color:#ccc;background:rgba(255,255,255,0.03)}
+.gear-cat.active{color:var(--neon);border-left-color:var(--neon);background:rgba(0,229,255,0.05)}
+.gear-content{overflow-y:auto;padding:12px}
+.gear-search{padding:10px 12px;border-bottom:1px solid var(--border);background:var(--surface)}
+.gear-search input{font-size:12px}
+.gear-item{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color 0.15s}
+.gear-item:hover{border-color:var(--neon)}
+.gear-item-selected{border-color:var(--neon);background:rgba(0,229,255,0.05)}
+.gear-item-name{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;color:var(--neon);margin-bottom:4px}
+.gear-item-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.gear-item-desc{font-family:'Share Tech Mono',monospace;font-size:10px;color:#888;line-height:1.6}
+.gear-item-source{font-size:9px;color:var(--dim);margin-top:4px;font-family:'Share Tech Mono',monospace}
+
+/* ── CHARACTER SHEET ── */
+.cs-section{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px}
+.cs-title{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.stat-box{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 4px;text-align:center}
+.stat-box-label{font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.stat-box-val{font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:var(--neon)}
+.wound-track{display:flex;gap:3px;flex-wrap:wrap}
+.wound-box{width:16px;height:16px;border:1px solid var(--border);border-radius:2px;cursor:pointer;transition:all 0.1s;background:var(--mid)}
+.wound-box.filled{background:var(--red);border-color:var(--red)}
+.wound-box.mortal{background:#4a0000;border-color:#ff0000}
+
+/* ── SKILL TABLE ── */
+.skill-table{width:100%;border-collapse:collapse;font-size:11px}
+.skill-table th{text-align:left;padding:4px 8px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;border-bottom:1px solid var(--border)}
+.skill-table td{padding:4px 8px;border-bottom:1px solid rgba(42,42,69,0.5);vertical-align:middle}
+.skill-table tr:last-child td{border-bottom:none}
+.skill-name{color:var(--text);font-family:'Rajdhani',sans-serif}
+.skill-stat{color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:9px}
+.skill-lvl-input{width:40px;text-align:center;font-family:'Orbitron',monospace;font-size:12px;font-weight:700;color:var(--neon);background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:2px}
+.skill-base{font-family:'Orbitron',monospace;font-size:11px;color:var(--gold);font-weight:700;min-width:30px;text-align:center}
+
+/* ── CYBERWARE ── */
+.cw-body{display:grid;grid-template-columns:200px 1fr 200px;gap:12px;align-items:start}
+.cw-slot{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:6px}
+.cw-slot-title{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--neon);letter-spacing:1px;margin-bottom:6px}
+.cw-entry{font-family:'Share Tech Mono',monospace;font-size:10px;color:#aaa;display:flex;justify-content:space-between;align-items:center;padding:2px 0}
+.cw-entry button{font-size:7px;padding:1px 4px;cursor:pointer;background:transparent;border:1px solid var(--dim);border-radius:2px;color:var(--dim)}
+.cw-entry button:hover{border-color:var(--red);color:var(--red)}
+
+/* ── GEAR LIST ── */
+.gear-list-item{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 12px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.gear-list-name{font-family:'Share Tech Mono',monospace;font-size:11px;color:#aaa}
+.gear-qty{font-family:'Orbitron',monospace;font-size:11px;color:var(--gold);min-width:20px;text-align:center}
+
+/* ── LIFEPATH ── */
+.lp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lp-item{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px}
+.lp-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:5px}
+.lp-value{font-size:12px;color:var(--text);line-height:1.5}
+.random-btn{background:rgba(255,214,0,0.1);border:1px solid rgba(255,214,0,0.3);color:var(--gold);font-size:9px;padding:3px 7px;border-radius:3px;cursor:pointer;font-family:'Orbitron',monospace;letter-spacing:1px}
+.random-btn:hover{background:rgba(255,214,0,0.2)}
+
+/* ── CREATION WIZARD ── */
+.wizard-step{display:none}.wizard-step.active{display:block}
+.wizard-progress{display:flex;gap:0;margin-bottom:24px;background:var(--mid);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.wizard-step-dot{flex:1;padding:10px 6px;text-align:center;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);border-right:1px solid var(--border);cursor:pointer;transition:all 0.15s}
+.wizard-step-dot:last-child{border-right:none}
+.wizard-step-dot.done{color:var(--green);background:rgba(105,240,174,0.05)}
+.wizard-step-dot.current{color:var(--neon);background:rgba(0,229,255,0.08)}
+.role-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.role-card{background:var(--mid);border:2px solid var(--border);border-radius:6px;padding:14px 10px;cursor:pointer;text-align:center;transition:all 0.15s}
+.role-card:hover{border-color:var(--neon);background:rgba(0,229,255,0.05)}
+.role-card.selected{border-color:var(--neon);background:rgba(0,229,255,0.1)}
+.role-card-name{font-family:'Orbitron',monospace;font-size:11px;font-weight:700;color:var(--neon);margin-bottom:4px}
+.role-card-desc{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);line-height:1.5}
+.pregen-card{background:var(--mid);border:2px solid var(--border);border-radius:6px;padding:14px;cursor:pointer;transition:all 0.15s}
+.pregen-card:hover{border-color:var(--gold);background:rgba(255,214,0,0.03)}
+.pregen-card.selected{border-color:var(--gold);background:rgba(255,214,0,0.06)}
+
+/* ── GM PANELS ── */
+.npc-list{display:flex;flex-direction:column;gap:8px}
+.npc-item{background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.npc-item-name{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;color:var(--neon)}
+.npc-item-sub{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:2px}
+.chip{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:3px;font-family:'Share Tech Mono',monospace;font-size:9px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:#888;cursor:pointer;transition:all 0.1s}
+.chip:hover{color:#ccc;border-color:#555}
+
+/* ── NOTIFICATIONS ── */
+.notification{position:fixed;top:60px;right:16px;z-index:9999;background:var(--surface);border:1px solid var(--neon);border-radius:6px;padding:10px 16px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--neon);max-width:300px;animation:slideIn 0.2s ease}
+.notification.error{border-color:var(--red);color:var(--red)}
+.notification.success{border-color:var(--green);color:var(--green)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ── PRINT ── */
+@media print{
+  #topbar,#sidebar,.no-print{display:none!important}
+  #main{overflow:visible;padding:0}
+  body{background:white;color:black}
+  .card,.cs-section{background:white;border:1px solid #ddd;break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <div class="logo">CP:RED GM</div>
+  <div class="logo-sub">// assistant v2.045</div>
+  <div class="topnav">
+    <div class="topnav-item active" data-panel="characters" onclick="switchTopPanel('characters',this)">Characters</div>
+    <div class="topnav-item" data-panel="npcs" onclick="switchTopPanel('npcs',this)">NPC Generator</div>
+    <div class="topnav-item" data-panel="encounters" onclick="switchTopPanel('encounters',this)">Encounters</div>
+    <div class="topnav-item" data-panel="ref" onclick="switchTopPanel('ref',this)">Quick Ref</div>
+  </div>
+  <div id="host-status" style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-left:8px"></div>
+  <div class="topbar-actions">
+    <button class="tb-btn" id="host-btn" onclick="toggleHost()" style="color:var(--gold);border-color:rgba(255,214,0,0.4)">Host Session</button>
+    <button class="tb-btn" onclick="newCharacter()">+ New</button>
+    <button class="tb-btn" onclick="loadCharacter()">Load</button>
+    <button class="tb-btn primary" onclick="saveCharacter()">Save</button>
+    <button class="tb-btn" onclick="exportPDF()">PDF</button>
+    <button class="tb-btn" onclick="exportJSON()">JSON</button>
+    <button class="tb-btn" onclick="printChar()">Print</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+<!-- SIDEBAR (Characters panel only) -->
+<div id="sidebar">
+  <div class="char-portrait" onclick="pickImage()" id="portrait-container">
+    <div class="portrait-overlay">Click to change image</div>
+    <div id="portrait-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--dim)">
+      <div style="font-size:48px">◈</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px">CLICK TO ADD IMAGE</div>
+    </div>
+    <img id="portrait-img" style="display:none;width:100%;height:100%;object-fit:cover">
+  </div>
+  <div class="char-identity">
+    <div class="char-name-display" id="sb-name">New Edgerunner</div>
+    <div class="char-handle-display" id="sb-handle">"Handle"</div>
+    <div class="char-role-display"><span class="badge badge-neon" id="sb-role">Solo</span></div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="snav-section">Character</div>
+    <div class="snav-item active" data-section="creation" onclick="switchSection('creation',this)"><span class="snav-icon">◈</span> Creation</div>
+    <div class="snav-item" data-section="stats" onclick="switchSection('stats',this)"><span class="snav-icon">◉</span> Stats & Skills</div>
+    <div class="snav-item" data-section="lifepath" onclick="switchSection('lifepath',this)"><span class="snav-icon">◎</span> Lifepath</div>
+    <div class="snav-section">Equipment</div>
+    <div class="snav-item" data-section="weapons" onclick="switchSection('weapons',this)"><span class="snav-icon">⚔</span> Weapons</div>
+    <div class="snav-item" data-section="armor" onclick="switchSection('armor',this)"><span class="snav-icon">◫</span> Armor</div>
+    <div class="snav-item" data-section="cyberware" onclick="switchSection('cyberware',this)"><span class="snav-icon">⬡</span> Cyberware</div>
+    <div class="snav-item" data-section="gear" onclick="switchSection('gear',this)"><span class="snav-icon">◷</span> Gear</div>
+    <div class="snav-item" data-section="netrunning" onclick="switchSection('netrunning',this)"><span class="snav-icon">◈</span> Netrunning</div>
+    <div class="snav-item" data-section="vehicles" onclick="switchSection('vehicles',this)"><span class="snav-icon">◧</span> Vehicles</div>
+    <div class="snav-item" data-section="roleability" onclick="switchSection('roleability',this)"><span class="snav-icon">✦</span> Role Ability</div>
+    <div class="snav-section">GM View</div>
+    <div class="snav-item" data-section="sheet" onclick="switchSection('sheet',this)"><span class="snav-icon">◱</span> Full Sheet</div>
+  </nav>
+  <div class="sidebar-footer">Night City · 2045<br>Time of the Red<br><br>
+    <div id="char-list-mini" style="margin-top:4px"></div>
+  </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div id="main">
+
+<!-- ══ TOP PANEL: CHARACTERS ══ -->
+<div class="panel active" id="panel-characters">
+
+  <!-- SECTION: CREATION WIZARD -->
+  <div class="panel active" id="section-creation">
+    <div class="panel-header">
+      <div><div class="panel-title">Character Creation</div><div class="panel-sub">// build your edgerunner</div></div>
+      <div class="actions-row" style="margin-top:0">
+        <button class="btn btn-ghost btn-sm" onclick="setCreationMode('pregen')">Pre-Generated</button>
+        <button class="btn btn-ghost btn-sm" onclick="setCreationMode('template')">Template</button>
+        <button class="btn btn-primary btn-sm" onclick="setCreationMode('custom')">Full Custom</button>
+      </div>
+    </div>
+
+    <!-- WIZARD PROGRESS -->
+    <div class="wizard-progress" id="wizard-progress">
+      <div class="wizard-step-dot current" onclick="goWizardStep(0)">1. Method</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(1)">2. Role</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(2)">3. Identity</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(3)">4. Stats</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(4)">5. Skills</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(5)">6. Lifepath</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(6)">7. Gear</div>
+      <div class="wizard-step-dot" onclick="goWizardStep(7)">8. Done</div>
+    </div>
+
+    <!-- STEP 0: METHOD -->
+    <div class="wizard-step active" id="wizard-step-0">
+      <div class="card">
+        <div class="card-title">◈ Choose Creation Method</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+          <div class="role-card" onclick="selectMethod('pregen',this)">
+            <div class="role-card-name">Pre-Generated</div>
+            <div class="role-card-desc">Choose from 6 ready-to-play edgerunners with full stats, gear and backstory hooks</div>
+          </div>
+          <div class="role-card" onclick="selectMethod('template',this)">
+            <div class="role-card-name">Template</div>
+            <div class="role-card-desc">Choose a role and get recommended stats, core skills and starting gear. Customize from there</div>
+          </div>
+          <div class="role-card" onclick="selectMethod('custom',this)">
+            <div class="role-card-name">Full Custom</div>
+            <div class="role-card-desc">Build your character from scratch — total control over every stat, skill and detail</div>
+          </div>
+        </div>
+        <div class="actions-row" style="justify-content:flex-end">
+          <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 1: ROLE / PREGEN SELECTION -->
+    <div class="wizard-step" id="wizard-step-1">
+      <div class="card" id="step1-role-section">
+        <div class="card-title">◈ Choose Role</div>
+        <div class="role-grid" id="role-select-grid">
+        </div>
+      </div>
+      <div class="card" id="step1-pregen-section" style="display:none">
+        <div class="card-title">◈ Choose Pre-Generated Character</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="pregen-grid"></div>
+      </div>
+      <div class="actions-row" style="justify-content:space-between">
+        <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
+        <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- STEP 2: IDENTITY -->
+    <div class="wizard-step" id="wizard-step-2">
+      <div class="card">
+        <div class="card-title">◈ Character Identity</div>
+        <div class="form-grid-2">
+          <div class="field"><label>Full Name</label><input id="c-name" placeholder="Night City name" oninput="updateSidebarIdentity()"></div>
+          <div class="field"><label>Street Handle</label><input id="c-handle" placeholder="The name everyone knows" oninput="updateSidebarIdentity()"></div>
+        </div>
+        <div class="form-grid-3">
+          <div class="field"><label>Age</label><input type="number" id="c-age" placeholder="25" min="15" max="80"></div>
+          <div class="field"><label>Gender / Pronouns</label><input id="c-gender" placeholder="Any"></div>
+          <div class="field"><label>Aliases</label><input id="c-aliases" placeholder="Other names used"></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field"><label>Reputation</label><input type="number" id="c-rep" value="0" min="0" max="10"></div>
+          <div class="field"><label>Starting Eddies (€$)</label><input type="number" id="c-eddies" value="500" min="0"></div>
+        </div>
+        <div class="field"><label>Character Notes</label><textarea id="c-notes" placeholder="Background, connections, goals, secrets..."></textarea></div>
+      </div>
+      <div class="actions-row" style="justify-content:space-between">
+        <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
+        <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: STATS -->
+    <div class="wizard-step" id="wizard-step-3">
+      <div class="card">
+        <div class="card-title">◈ Core Statistics</div>
+        <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:14px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.7">
+          Distribute 62 points among stats (max 8 at creation, min 2).<br>
+          LUCK pool = LUCK stat. MOVE = BODY stat. HP = 10 + (5 × BODY).
+          EMP determines max Humanity (EMP × 10).
+        </div>
+        <div id="stat-points-remaining" style="font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:var(--gold);text-align:center;margin-bottom:12px">Points Remaining: 62</div>
+        <div class="stat-grid" id="stat-input-grid"></div>
+        <div class="divider"></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px" id="derived-stats">
+          <div class="stat-box"><div class="stat-box-label">Hit Points</div><div class="stat-box-val" id="derived-hp">40</div></div>
+          <div class="stat-box"><div class="stat-box-label">Seriously Wounded</div><div class="stat-box-val" id="derived-sw">20</div></div>
+          <div class="stat-box"><div class="stat-box-label">Death Save</div><div class="stat-box-val" id="derived-ds">5</div></div>
+          <div class="stat-box"><div class="stat-box-label">Humanity</div><div class="stat-box-val" id="derived-hum">50</div></div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="field"><label>Role Ability Rank (1-10)</label><input type="number" id="c-role-rank" value="4" min="1" max="10" style="width:80px;text-align:center;font-family:'Orbitron',monospace;font-size:16px;color:var(--neon)"></div>
+        </div>
+      </div>
+      <div class="actions-row" style="justify-content:space-between">
+        <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
+        <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- STEP 4: SKILLS -->
+    <div class="wizard-step" id="wizard-step-4">
+      <div class="card">
+        <div class="card-title">◈ Skills</div>
+        <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:14px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.7">
+          Distribute 86 skill points (max level 6 at creation). Base = STAT + Level.
+          Skills marked (x2) cost 2 points per level.
+        </div>
+        <div id="skill-points-remaining" style="font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:var(--gold);text-align:center;margin-bottom:12px">Points Remaining: 86</div>
+        <div id="skill-input-tables" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
+      </div>
+      <div class="actions-row" style="justify-content:space-between">
+        <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
+        <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- STEP 5: LIFEPATH -->
+    <div class="wizard-step" id="wizard-step-5">
+      <div class="card">
+        <div class="card-title">◈ Lifepath</div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+          <button class="btn btn-gold btn-sm" onclick="randomizeAllLifepath()">🎲 Randomize All</button>
+        </div>
+        <div id="lifepath-fields" class="lp-grid"></div>
+      </div>
+      <div class="actions-row" style="justify-content:space-between">
+        <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
+        <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- STEP 6: STARTING GEAR -->
+    <div class="wizard-step" id="wizard-step-6">
+      <div class="card">
+        <div class="card-title">◈ Starting Equipment</div>
+        <div id="starting-gear-info" style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:14px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)">
+          Suggested starting gear for your role will be pre-selected. Visit the Weapons, Armor, Gear, and Cyberware sections to customize.
+        </div>
+        <div id="starting-gear-list"></div>
+      </div>
+      <div class="actions-row" style="justify-content:space-between">
+        <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
+        <button class="btn btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- STEP 7: DONE -->
+    <div class="wizard-step" id="wizard-step-7">
+      <div class="card" style="text-align:center;padding:40px 24px">
+        <div style="font-family:'Orbitron',monospace;font-size:24px;font-weight:700;color:var(--neon);margin-bottom:12px">Character Created</div>
+        <div id="creation-done-summary" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--muted);line-height:2;margin-bottom:24px"></div>
+        <div class="actions-row" style="justify-content:center;gap:12px">
+          <button class="btn btn-primary" onclick="switchSection('stats',document.querySelector('[data-section=stats]'))">View Stats & Skills</button>
+          <button class="btn btn-outline" onclick="switchSection('sheet',document.querySelector('[data-section=sheet]'))">Full Character Sheet</button>
+          <button class="btn btn-ghost" onclick="saveCharacter()">Save Character</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: STATS & SKILLS -->
+  <div class="panel" id="section-stats">
+    <div class="panel-header"><div><div class="panel-title">Stats & Skills</div><div class="panel-sub">// your edgerunner's capabilities</div></div></div>
+    <div class="cs-section">
+      <div class="cs-title">Core Statistics</div>
+      <div class="stat-grid" id="view-stat-grid"></div>
+      <div class="divider"></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        <div class="stat-box"><div class="stat-box-label">Hit Points</div><div class="stat-box-val" id="view-hp">—</div></div>
+        <div class="stat-box"><div class="stat-box-label">Seriously Wounded</div><div class="stat-box-val" id="view-sw">—</div></div>
+        <div class="stat-box"><div class="stat-box-label">Death Save</div><div class="stat-box-val" id="view-ds">—</div></div>
+        <div class="stat-box"><div class="stat-box-label">Humanity</div><div class="stat-box-val" id="view-hum">—</div></div>
+      </div>
+    </div>
+    <div class="cs-section">
+      <div class="cs-title">Skills</div>
+      <div id="view-skills-tables" style="display:grid;grid-template-columns:1fr 1fr;gap:14px"></div>
+    </div>
+    <div class="cs-section">
+      <div class="cs-title">Role Ability</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="view-role-ability" style="font-family:'Orbitron',monospace;font-size:14px;color:var(--neon)">—</div>
+        <div id="view-role-rank" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--muted)">Rank —</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: LIFEPATH -->
+  <div class="panel" id="section-lifepath">
+    <div class="panel-header"><div><div class="panel-title">Lifepath</div><div class="panel-sub">// who you were before the Edge</div></div>
+      <button class="btn btn-gold btn-sm" onclick="randomizeAllLifepath()">🎲 Randomize</button>
+    </div>
+    <div class="cs-section"><div class="cs-title">Background</div><div id="view-lifepath-grid" class="lp-grid"></div></div>
+    <div class="cs-section">
+      <div class="cs-title">Friends, Enemies & Events</div>
+      <div class="form-grid-2">
+        <div class="field"><label>Friends (up to 3)</label><textarea id="lp-friends" placeholder="Friend 1&#10;Friend 2&#10;Friend 3" style="min-height:80px"></textarea></div>
+        <div class="field"><label>Tragic Love Affairs</label><textarea id="lp-love" placeholder="Who? What happened?" style="min-height:80px"></textarea></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label>Enemies</label>
+        <textarea id="lp-enemies" placeholder="Who? What caused it? What can they throw at you? What's gonna happen?" style="min-height:80px"></textarea>
+      </div>
+      <div class="field" style="margin-top:10px"><label>Life Goals</label><textarea id="lp-goals" placeholder="What do you want to achieve?"></textarea></div>
+      <div class="field" style="margin-top:10px"><label>Role-Specific Lifepath</label><textarea id="lp-role-specific" placeholder="Events specific to your role..." style="min-height:80px"></textarea></div>
+    </div>
+  </div>
+
+  <!-- SECTION: WEAPONS -->
+  <div class="panel" id="section-weapons">
+    <div class="panel-header"><div><div class="panel-title">Weapons</div><div class="panel-sub">// your arsenal</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div>
+        <div class="cs-section" style="margin-bottom:0">
+          <div class="cs-title">Equipped Weapons</div>
+          <div id="equipped-weapons-list"></div>
+          <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="showGearBrowser('weapons')">+ Add Weapon</button>
+        </div>
+      </div>
+      <div id="weapon-browser-panel">
+        <div class="card">
+          <div class="card-title">◈ Weapon Database</div>
+          <input placeholder="Search weapons..." oninput="filterGear('weapons',this.value)" style="margin-bottom:10px">
+          <div id="weapon-category-tabs" class="tabs" style="flex-wrap:wrap"></div>
+          <div id="weapon-list-display" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: ARMOR -->
+  <div class="panel" id="section-armor">
+    <div class="panel-header"><div><div class="panel-title">Armor</div><div class="panel-sub">// protection & style</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="cs-section">
+        <div class="cs-title">Equipped Armor</div>
+        <div class="form-grid-2" style="margin-bottom:10px">
+          <div class="field"><label>Head Armor</label><input id="armor-head" placeholder="Type (SP X)"></div>
+          <div class="field"><label>Head SP</label><input type="number" id="armor-head-sp" value="0" min="0"></div>
+        </div>
+        <div class="form-grid-2" style="margin-bottom:10px">
+          <div class="field"><label>Body Armor</label><input id="armor-body" placeholder="Type (SP X)"></div>
+          <div class="field"><label>Body SP</label><input type="number" id="armor-body-sp" value="0" min="0"></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field"><label>Shield</label><input id="armor-shield" placeholder="Shield type"></div>
+          <div class="field"><label>Shield SP</label><input type="number" id="armor-shield-sp" value="0" min="0"></div>
+        </div>
+        <div style="margin-top:10px;padding:8px;background:var(--mid);border:1px solid var(--border);border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)">
+          Note: Armor penalty applies to REF, DEX & MOVE
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">◈ Armor Database</div>
+          <input placeholder="Search armor..." oninput="filterArmorList(this.value)" style="margin-bottom:10px">
+          <div id="armor-list-display" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: CYBERWARE -->
+  <div class="panel" id="section-cyberware">
+    <div class="panel-header"><div><div class="panel-title">Cyberware</div><div class="panel-sub">// chrome and humanity</div></div></div>
+    <div style="display:grid;grid-template-columns:300px 1fr;gap:14px">
+      <div>
+        <div class="cs-section">
+          <div class="cs-title">Installed Chrome</div>
+          <div id="cw-installed-list"></div>
+          <div class="divider"></div>
+          <div style="display:flex;justify-content:space-between;font-family:'Share Tech Mono',monospace;font-size:10px">
+            <span style="color:var(--muted)">Total Humanity Loss:</span>
+            <span style="color:var(--red)" id="total-hl">0</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'Share Tech Mono',monospace;font-size:10px;margin-top:4px">
+            <span style="color:var(--muted)">Current Humanity:</span>
+            <span style="color:var(--gold)" id="current-humanity">—</span>
+          </div>
+        </div>
+        <div class="cs-section" style="margin-bottom:0">
+          <div class="cs-title">Body Map</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);line-height:2">
+            <div>🔲 Neural Link: <span id="bm-neural" style="color:var(--neon)">—</span></div>
+            <div>🔲 Cyberaudio: <span id="bm-audio" style="color:var(--neon)">—</span></div>
+            <div>🔲 Right Cybereye: <span id="bm-reye" style="color:var(--neon)">—</span></div>
+            <div>🔲 Left Cybereye: <span id="bm-leye" style="color:var(--neon)">—</span></div>
+            <div>🔲 Right Cyberarm: <span id="bm-rarm" style="color:var(--neon)">—</span></div>
+            <div>🔲 Left Cyberarm: <span id="bm-larm" style="color:var(--neon)">—</span></div>
+            <div>🔲 Right Cyberleg: <span id="bm-rleg" style="color:var(--neon)">—</span></div>
+            <div>🔲 Left Cyberleg: <span id="bm-lleg" style="color:var(--neon)">—</span></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">◈ Cyberware Database</div>
+          <input placeholder="Search cyberware..." oninput="filterCyberwareList(this.value)" style="margin-bottom:10px">
+          <div id="cw-category-tabs" class="tabs" style="flex-wrap:wrap"></div>
+          <div id="cw-list-display" style="max-height:450px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: GEAR -->
+  <div class="panel" id="section-gear">
+    <div class="panel-header"><div><div class="panel-title">Gear & Equipment</div><div class="panel-sub">// tools of the trade</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="cs-section">
+        <div class="cs-title">Carried Gear</div>
+        <div id="carried-gear-list" style="min-height:100px"></div>
+        <div class="divider"></div>
+        <div class="form-grid-2" style="margin-bottom:8px">
+          <div class="field"><label>Ammunition Notes</label><textarea id="ammo-notes" placeholder="Ammo types and counts..." style="min-height:50px"></textarea></div>
+          <div class="field"><label>Cash (€$)</label><input type="number" id="char-cash" value="500" min="0"></div>
+        </div>
+        <div class="field"><label>Fashion / Clothing</label><textarea id="char-fashion" placeholder="Clothing style, notable pieces..." style="min-height:50px"></textarea></div>
+        <div class="form-grid-3" style="margin-top:10px">
+          <div class="field"><label>Housing</label><input id="char-housing" placeholder="Cube hotel, conapt..."></div>
+          <div class="field"><label>Rent/Month</label><input id="char-rent" placeholder="0 eb"></div>
+          <div class="field"><label>Lifestyle</label><input id="char-lifestyle" placeholder="Kibble, Street..."></div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">◈ Gear Database</div>
+          <input placeholder="Search gear..." oninput="filterGearList(this.value)" style="margin-bottom:10px">
+          <div id="gear-category-tabs" class="tabs" style="flex-wrap:wrap"></div>
+          <div id="gear-list-display" style="max-height:400px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: NETRUNNING -->
+  <div class="panel" id="section-netrunning">
+    <div class="panel-header"><div><div class="panel-title">Netrunning</div><div class="panel-sub">// jack in, jack out</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div>
+        <div class="cs-section">
+          <div class="cs-title">Cyberdeck</div>
+          <div class="form-grid-2" style="margin-bottom:10px">
+            <div class="field"><label>Deck Name/Model</label><input id="net-deck-name" placeholder="Standard Quality Cyberdeck"></div>
+            <div class="field"><label>Deck Cost</label><input id="net-deck-cost" placeholder="500eb"></div>
+          </div>
+          <div class="form-grid-3">
+            <div class="field"><label>Universal Slots</label><input type="number" id="net-slots-u" value="7" min="0"></div>
+            <div class="field"><label>Program Slots</label><input type="number" id="net-slots-p" value="0" min="0"></div>
+            <div class="field"><label>Hardware Slots</label><input type="number" id="net-slots-h" value="0" min="0"></div>
+          </div>
+        </div>
+        <div class="cs-section">
+          <div class="cs-title">Loaded Programs</div>
+          <div id="net-programs-loaded" style="min-height:60px"></div>
+          <div class="field" style="margin-top:8px"><label>Hardware Installed</label><textarea id="net-hardware" placeholder="Crunch Whistle, Backup Drive..." style="min-height:50px"></textarea></div>
+        </div>
+        <div class="cs-section" style="margin-bottom:0">
+          <div class="cs-title">Stealth Netrunning</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.8">
+            <div>Jack In (Quietly): Spend extra NET Action</div>
+            <div>vs Watchers: Interface + 1d10 each</div>
+            <div>vs Black ICE: Interface + Cloak Bonus + 1d10</div>
+            <div>Breaking Stealth: Taking Control Nodes, attacking ICE</div>
+            <div>Re-establish: Jack Out + Quietly Jack In again</div>
+          </div>
+          <div style="margin-top:8px">
+            <div class="field"><label>Stealth Notes</label><textarea id="net-stealth-notes" placeholder="Architecture notes, DV targets, active programs..." style="min-height:50px"></textarea></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">◈ Program & ICE Database</div>
+          <input placeholder="Search programs..." oninput="filterNetList(this.value)" style="margin-bottom:10px">
+          <div id="net-category-tabs" class="tabs" style="flex-wrap:wrap"></div>
+          <div id="net-list-display" style="max-height:500px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: VEHICLES -->
+  <div class="panel" id="section-vehicles">
+    <div class="panel-header"><div><div class="panel-title">Vehicles</div><div class="panel-sub">// wheels, wings, and chrome chairs</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="cs-section" style="margin-bottom:0">
+        <div class="cs-title">Owned Vehicles</div>
+        <div id="owned-vehicles-list"></div>
+        <div id="nomad-note" style="margin-top:10px"></div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">◈ Vehicle Database</div>
+          <input placeholder="Search vehicles &amp; upgrades..." oninput="filterVehicleList(this.value)" style="margin-bottom:10px">
+          <div id="veh-category-tabs" class="tabs" style="flex-wrap:wrap"></div>
+          <div id="veh-list-display" style="max-height:420px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: ROLE ABILITY -->
+  <div class="panel" id="section-roleability">
+    <div class="panel-header"><div><div class="panel-title">Role Ability</div><div class="panel-sub">// what makes your role special</div></div></div>
+    <div id="roleability-view"></div>
+  </div>
+
+  <!-- SECTION: FULL SHEET -->
+  <div class="panel" id="section-sheet">
+    <div class="panel-header">
+      <div><div class="panel-title">Character Sheet</div><div class="panel-sub">// full view</div></div>
+      <div class="actions-row" style="margin-top:0">
+        <button class="btn btn-outline btn-sm" onclick="exportPDF()">Export PDF</button>
+        <button class="btn btn-ghost btn-sm" onclick="printChar()">Print</button>
+      </div>
+    </div>
+    <div id="full-sheet-view"></div>
+  </div>
+
+  <!-- SECTION: SESSION TRACKER -->
+  <div class="panel" id="section-tracker">
+    <div class="panel-header"><div><div class="panel-title">Session Tracker</div><div class="panel-sub">// live session management</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div>
+        <div class="cs-section">
+          <div class="cs-title">Hit Points</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="font-family:'Orbitron',monospace;font-size:32px;font-weight:700;color:var(--neon)" id="tracker-hp">40</div>
+            <div style="color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:14px">/ <span id="tracker-maxhp">40</span></div>
+          </div>
+          <div class="hp-bar"><div class="hp-fill" id="tracker-hp-bar" style="width:100%;background:var(--green)"></div></div>
+          <div class="actions-row" style="margin-top:6px">
+            <button class="btn btn-red btn-sm" onclick="adjTrackerHP(-1)">-1</button>
+            <button class="btn btn-red btn-sm" onclick="adjTrackerHP(-5)">-5</button>
+            <button class="btn btn-red btn-sm" onclick="adjTrackerHP(-10)">-10</button>
+            <button class="btn btn-sm" style="background:rgba(105,240,174,0.12);color:var(--green);border:1px solid rgba(105,240,174,0.3)" onclick="adjTrackerHP(+1)">+1</button>
+            <button class="btn btn-sm" style="background:rgba(105,240,174,0.12);color:var(--green);border:1px solid rgba(105,240,174,0.3)" onclick="adjTrackerHP(+5)">+5</button>
+            <button class="btn btn-sm" style="background:rgba(105,240,174,0.12);color:var(--green);border:1px solid rgba(105,240,174,0.3)" onclick="adjTrackerHP(+10)">+10</button>
+            <input type="number" id="custom-hp-adj" placeholder="±" style="width:60px;text-align:center">
+            <button class="btn btn-ghost btn-sm" onclick="adjTrackerHPCustom()">Apply</button>
+          </div>
+        </div>
+        <div class="cs-section">
+          <div class="cs-title">Wound Track</div>
+          <div class="wound-track" id="tracker-wounds"></div>
+          <div style="margin-top:8px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)">
+            Boxes 1-4: Light | 5-8: Serious | 9-10: Critical | 11-12: Mortal
+          </div>
+        </div>
+        <div class="cs-section">
+          <div class="cs-title">Humanity</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="font-family:'Orbitron',monospace;font-size:24px;font-weight:700;color:var(--gold)" id="tracker-hum">50</div>
+            <div style="color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:12px">/ <span id="tracker-maxhum">50</span></div>
+          </div>
+          <div class="hp-bar"><div class="hp-fill" id="tracker-hum-bar" style="width:100%;background:var(--gold)"></div></div>
+          <div class="actions-row" style="margin-top:6px">
+            <button class="btn btn-red btn-sm" onclick="adjTrackerHum(-1)">-1</button>
+            <button class="btn btn-red btn-sm" onclick="adjTrackerHum(-10)">-10</button>
+            <button class="btn btn-sm" style="background:rgba(105,240,174,0.12);color:var(--green);border:1px solid rgba(105,240,174,0.3)" onclick="adjTrackerHum(+1)">+1</button>
+            <button class="btn btn-sm" style="background:rgba(105,240,174,0.12);color:var(--green);border:1px solid rgba(105,240,174,0.3)" onclick="adjTrackerHum(+10)">+10</button>
+          </div>
+        </div>
+        <div class="cs-section" style="margin-bottom:0">
+          <div class="cs-title">Eddies & Luck</div>
+          <div class="form-grid-2">
+            <div>
+              <div class="section-label">Eddies (€$)</div>
+              <div style="font-family:'Orbitron',monospace;font-size:20px;color:var(--gold)" id="tracker-eddies">0</div>
+              <div class="actions-row" style="margin-top:4px">
+                <button class="btn btn-red btn-xs" onclick="adjEddies(-100)">-100</button>
+                <button class="btn btn-red btn-xs" onclick="adjEddies(-500)">-500</button>
+                <button class="btn btn-xs" style="background:rgba(105,240,174,0.1);color:var(--green);border:1px solid rgba(105,240,174,0.25)" onclick="adjEddies(+100)">+100</button>
+                <button class="btn btn-xs" style="background:rgba(105,240,174,0.1);color:var(--green);border:1px solid rgba(105,240,174,0.25)" onclick="adjEddies(+500)">+500</button>
+              </div>
+            </div>
+            <div>
+              <div class="section-label">Luck Points</div>
+              <div id="luck-pips" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="cs-section">
+          <div class="cs-title">Critical Injuries</div>
+          <textarea id="tracker-crits" placeholder="Record critical injuries here..." style="min-height:120px;font-family:'Share Tech Mono',monospace;font-size:11px"></textarea>
+        </div>
+        <div class="cs-section">
+          <div class="cs-title">Addictions</div>
+          <textarea id="tracker-addictions" placeholder="Track active addictions..." style="min-height:80px;font-family:'Share Tech Mono',monospace;font-size:11px"></textarea>
+        </div>
+        <div class="cs-section">
+          <div class="cs-title">Improvement Points & Reputation</div>
+          <div class="form-grid-2">
+            <div class="field"><label>IP Earned</label><input type="number" id="tracker-ip" value="0" min="0"></div>
+            <div class="field"><label>Reputation (0-10)</label><input type="number" id="tracker-rep" value="0" min="0" max="10"></div>
+          </div>
+          <div class="field" style="margin-top:8px"><label>Reputation Events</label><textarea id="tracker-rep-events" placeholder="Notable reputation events..." style="min-height:60px"></textarea></div>
+        </div>
+        <div class="cs-section" style="margin-bottom:0">
+          <div class="cs-title">Session Notes</div>
+          <textarea id="tracker-notes" placeholder="Session notes, plot threads, contacts made..." style="min-height:120px;font-family:'Share Tech Mono',monospace;font-size:11px"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /panel-characters -->
+
+<!-- ══ TOP PANEL: NPC GENERATOR ══ -->
+<div class="panel" id="panel-npcs">
+  <div class="panel-header"><div><div class="panel-title">NPC Generator</div><div class="panel-sub">// generate fully-statted non-player characters</div></div></div>
+  <div class="card">
+    <div class="card-title">◈ Configuration</div>
+    <div class="form-grid-2">
+      <div class="field"><label>Role</label><select id="npc-role"></select></div>
+      <div class="field"><label>Affiliation</label><select id="npc-affil"></select></div>
+    </div>
+    <div class="form-grid-2">
+      <div class="field"><label>District</label><select id="npc-district"></select></div>
+      <div class="field"><label>Disposition</label>
+        <select id="npc-tone">
+          <option>Neutral</option><option>Friendly</option><option>Hostile</option>
+          <option>Suspicious</option><option>Desperate</option><option>Calculating</option><option>Unhinged</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:12px"><label>Additional Notes (optional)</label>
+      <textarea id="npc-notes" placeholder="e.g. former Trauma Team medic, hiding from Arasaka, knows the players fixer..."></textarea>
+    </div>
+    <div class="actions-row">
+      <button class="btn btn-primary" onclick="generateNPC()" id="npc-gen-btn">⚡ Generate NPC</button>
+      <button class="btn btn-outline btn-sm" onclick="saveNPC()" id="npc-save-btn" style="display:none">Save to Roster</button>
+    </div>
+  </div>
+  <div class="card" id="npc-output-card" style="display:none">
+    <div class="card-title">◈ Generated NPC</div>
+    <div class="output-box" id="npc-output"></div>
+  </div>
+  <div class="card" id="npc-roster-card" style="display:none">
+    <div class="card-title">◈ Saved Roster</div>
+    <div class="npc-list" id="npc-roster-list"></div>
+  </div>
+</div>
+
+<!-- ══ TOP PANEL: ENCOUNTERS ══ -->
+<div class="panel" id="panel-encounters">
+  <div class="panel-header"><div><div class="panel-title">Encounters &amp; Session</div><div class="panel-sub">// generate encounters, run the table</div></div></div>
+  <div class="tabs">
+    <button class="tab active" id="enc-tab-gen" onclick="switchEncTab('gen')">Encounter Generator</button>
+    <button class="tab" id="enc-tab-session" onclick="switchEncTab('session')">Session Tracker</button>
+  </div>
+  <div id="enc-generator-wrap">
+  <div class="card">
+    <div class="card-title">◈ Parameters</div>
+    <div class="form-grid-2">
+      <div class="field"><label>Type</label><select id="enc-type"></select></div>
+      <div class="field"><label>Difficulty</label>
+        <select id="enc-diff"><option>Easy</option><option>Medium</option><option>Hard</option><option>Brutal</option><option>Meat Grinder</option></select>
+      </div>
+    </div>
+    <div class="form-grid-2">
+      <div class="field"><label>District</label><select id="enc-district"></select></div>
+      <div class="field"><label>Players</label>
+        <select id="enc-players"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select>
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:12px"><label>Campaign Context</label>
+      <textarea id="enc-context" placeholder="e.g. Players just stole from Arasaka, need to lay low in Pacifica..."></textarea>
+    </div>
+    <div class="actions-row">
+      <button class="btn btn-primary" onclick="generateEncounter()" id="enc-gen-btn">⚡ Generate Encounter</button>
+      <button class="btn btn-outline btn-sm" onclick="saveEncounter()" id="enc-save-btn" style="display:none">Save Encounter</button>
+    </div>
+  </div>
+  <div class="card" id="enc-output-card" style="display:none">
+    <div class="card-title">◈ Encounter Brief</div>
+    <div class="output-box" id="enc-output"></div>
+  </div>
+  <div class="card" id="enc-roster-card" style="display:none">
+    <div class="card-title">◈ Saved Encounters</div>
+    <div class="npc-list" id="enc-roster-list"></div>
+  </div>
+  </div><!-- /enc-generator-wrap -->
+
+  <div id="enc-session-wrap" style="display:none">
+    <div class="card">
+      <div class="card-title">◈ Load Characters Into Session</div>
+      <div id="session-char-picker" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    </div>
+    <div id="session-tracker-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px"></div>
+  </div>
+</div>
+
+<!-- ══ TOP PANEL: QUICK REF ══ -->
+<div class="panel" id="panel-ref">
+  <div class="panel-header"><div><div class="panel-title">Quick Reference</div><div class="panel-sub">// rules lookup & GM oracle</div></div></div>
+  <div class="card">
+    <div class="card-title">◈ Rules Lookup</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input id="ref-topic" placeholder="How does armor work? What's the DV for hacking?" style="flex:1" onkeydown="if(event.key==='Enter')lookupRule()">
+      <button class="btn btn-primary" onclick="lookupRule()" id="ref-btn">Look Up</button>
+    </div>
+    <div class="section-label">Quick Topics</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px" id="quick-topics-row"></div>
+  </div>
+  <div class="card" id="ref-output-card" style="display:none">
+    <div class="output-box" id="ref-output"></div>
+  </div>
+</div>
+
+</div><!-- /main -->
+</div><!-- /app -->
+
+<script src="app.js"></script>
+</body>
+</html>
