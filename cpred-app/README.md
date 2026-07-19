@@ -43,6 +43,15 @@ The repo publishes to GitHub Releases, and the installed app checks that feed on
 3. GitHub Actions (`.github/workflows/release.yml`) builds the Windows installer and the macOS universal dmg/zip and attaches them all to **one draft release** — this takes a few minutes since the platforms build sequentially by design (see comments in the workflow file for why)
 4. Go to the repo's **Releases** page and click **Publish release** on the draft — this is a deliberate manual gate so a bad build never auto-ships. Once published, installed copies of the app will pick it up on their next launch and prompt to restart after downloading.
 
+> ⚠️ **Wait for the build to finish before publishing.** Publish the draft only
+> once it shows **all 8 assets** (the Windows `.exe`, the mac universal
+> `.dmg`/`.zip`, their `.blockmap`s, and `latest.yml` + `latest-mac.yml`).
+> electron-builder cannot attach installers to a release that is already
+> published — publishing an empty draft mid-build leaves the release with no
+> files and the uploads silently skipped. If that happens: delete the empty
+> release (the tag survives), re-run the Release workflow from the Actions tab,
+> and publish the new draft after the assets appear.
+
 Windows installs are also unsigned (no code-signing cert), so Windows SmartScreen may show a "Windows protected your PC" warning on first run — click **More info → Run anyway**. The auto-update flow uses `electron-updater`'s own installer replacement, not a browser download, so it isn't affected by this.
 
 ---
