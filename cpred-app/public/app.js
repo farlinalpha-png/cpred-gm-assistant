@@ -33,7 +33,7 @@ function newBlankChar() {
     rep: 0, eddies: 500,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
     roleAbilityRank: 4,
-    skills: {},
+    skills: {}, skillSpecs: {},
     hp: 40, maxHp: 40, wounds: 0,
     humanity: 50, maxHumanity: 50,
     lifepath: {},
@@ -360,6 +360,7 @@ const lifepathDefs = [
   { key: 'childhoodEnv', label: 'Childhood Environment', options: 'childhoodEnvironment' },
   { key: 'familyCrisis', label: 'Family Crisis', free: true },
   { key: 'lifeGoals', label: 'Life Goals', free: true },
+  { key: 'lifepathNotes', label: 'Lifepath Notes', free: true },
 ];
 
 function buildLifepathFields() {
@@ -1098,6 +1099,12 @@ function collectAllFormData() {
 }
 
 function saveToLocalStorage() {
+  // Characters opened from the pcs/npcs folder store (e.g. via the Session
+  // Tracker's Full Sheet button) save back to their folder, not localStorage
+  if (ipc && (char._kind === 'pcs' || char._kind === 'npcs')) {
+    callIPC('store-save', char._kind, char);
+    return;
+  }
   const existing = savedChars.findIndex(c => c.id === char.id);
   if (existing >= 0) savedChars[existing] = char;
   else savedChars.push(char);
@@ -1863,6 +1870,22 @@ function renderRoleAbility() {
 }
 
 // ── OVERRIDE: stats view + full sheet use effective stats & auto HL ─
+// Skills that require a player-chosen specialization (Language (Streetslang), Science (Chemistry), ...)
+const SPEC_SKILL_RE = /^(Language|Local Expert|Science|Play Instrument)\b/;
+
+function setSkillSpec(name, v) {
+  if (!char.skillSpecs) char.skillSpecs = {};
+  char.skillSpecs[name] = v;
+  saveToLocalStorage();
+}
+
+function skillSpecInput(name, opts = {}) {
+  const val = (char.skillSpecs && char.skillSpecs[name]) || '';
+  return `<input value="${val.replace(/"/g, '&quot;')}" placeholder="${opts.placeholder || 'which one?'}"
+    style="display:block;width:${opts.w || '95%'};margin-top:2px;background:transparent;border:none;border-bottom:1px dashed var(--gold);color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:9px;padding:0 2px;outline:none"
+    onclick="event.stopPropagation()" oninput="setSkillSpec('${name.replace(/'/g, "\\'")}', this.value)">`;
+}
+
 function renderStatsView() {
   const { eff, notes } = effectiveStats(char);
   const grid = document.getElementById('view-stat-grid');
@@ -1887,8 +1910,9 @@ function renderStatsView() {
         ${skills.map(sk => {
           const lvl = char.skills[sk.name] || 0;
           const base = (eff[sk.stat] || 5) + lvl;
+          const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
           return `<tr style="${lvl>0?'background:rgba(0,229,255,0.04)':''}">
-            <td class="skill-name" style="${lvl>0?'color:var(--neon)':''}">${sk.name}</td>
+            <td class="skill-name" style="${lvl>0?'color:var(--neon)':''}">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</td>
             <td style="text-align:center;font-family:'Orbitron',monospace;font-size:11px;color:${lvl>0?'var(--neon)':'var(--dim)'}">${lvl||'—'}</td>
             <td class="skill-stat">${sk.stat}</td>
             <td class="skill-base">${lvl>0?base:'—'}</td></tr>`;
@@ -2060,6 +2084,7 @@ function sessionCard(c, order) {
           <input type="number" value="${hasInit ? c.initiative : ''}" placeholder="–" style="width:40px;font-size:12px;padding:2px 3px;text-align:center" onchange="sessSetInit('${c.id}',this.value)">
         </div>
         <button class="btn btn-xs btn-ghost" title="Roll 1d10 + REF" onclick="sessRollInit('${c.id}')">🎲</button>
+        <button class="btn btn-xs btn-outline" title="View / edit the full character sheet" onclick="sessOpenSheet('${c.id}')">Sheet</button>
         ${c.portrait ? `<img src="${c.portrait}" style="width:32px;height:32px;border-radius:4px;object-fit:cover">` : ''}
       </div>
     </div>
@@ -2282,6 +2307,7 @@ function renderFullSheet() {
             <span class="badge badge-gold">${det.name || '—'} Rank ${ed('roleAbilityRank', char.roleAbilityRank||4, {num:true, w:'34px', center:true, color:'var(--gold)'})}</span>
             <span class="badge badge-red" style="margin-left:6px">HL: ${hl} (auto)</span>
             <span class="badge badge-neon" style="margin-left:6px">Humanity: ${hum}/${(char.stats.EMP||5)*10}</span>
+            <span class="badge badge-green" style="margin-left:6px">IP: ${ed('trackerIP', char.trackerIP||0, {num:true, w:'44px', center:true, color:'var(--green)'})}</span>
           </div>
         </div>
       </div>
@@ -2336,10 +2362,11 @@ function renderFullSheet() {
             ${skills.map(sk => {
               const lvl = char.skills[sk.name]||0;
               const base = (eff[sk.stat]||5) + lvl;
+              const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
               return `<div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;padding:1px 0;border-bottom:1px solid rgba(42,42,69,0.4);${lvl>0?'background:rgba(0,229,255,0.04)':''}">
-                <span style="${lvl>0?'color:var(--neon)':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+                <span style="${lvl>0?'color:var(--neon)':''};overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
-                  <input type="number" min="0" max="10" value="${lvl}" style="width:34px;text-align:center;background:var(--mid);border:1px solid var(--border);border-radius:2px;color:var(--neon);font-size:10px;padding:1px" oninput="sheetEditSkill('${sk.name.replace(/'/g,"\\'")}', this.value)">
+                  <input type="number" min="0" max="10" value="${lvl}" style="width:34px;text-align:center;background:var(--mid);border:1px solid var(--border);border-radius:2px;color:var(--neon);font-size:10px;padding:1px" oninput="sheetEditSkill('${sk.name.replace(/'/g,"\\'")}', this.value)" onchange="renderFullSheet()">
                   <span style="color:var(--gold);min-width:22px;text-align:right">${lvl>0?base:'—'}</span>
                 </span></div>`;
             }).join('')}</div>`).join('')}
@@ -3050,6 +3077,21 @@ async function sessClearInitAll() {
   const all = await folderChars();
   const inSession = all.filter(c => sessionCharIds.includes(c.id));
   for (const c of inSession) await sessMutate(c.id, x => { x.initiative = null; });
+}
+
+// Open a session character's full sheet for mid-game viewing/editing.
+// The char keeps its _kind so saveToLocalStorage routes edits back to
+// the pcs/npcs folder store instead of localStorage.
+async function sessOpenSheet(id) {
+  const all = await folderChars();
+  const c = all.find(x => String(x.id) === String(id));
+  if (!c) { notify('Character not found', 'error'); return; }
+  char = c;
+  const navChars = [...document.querySelectorAll('.topnav-item')].find(n => (n.getAttribute('onclick') || '').includes("'characters'"));
+  if (navChars) switchTopPanel('characters', navChars);
+  const snavSheet = [...document.querySelectorAll('.snav-item')].find(n => (n.getAttribute('onclick') || '').includes("'sheet'"));
+  switchSection('sheet', snavSheet);
+  updateSidebarIdentity();
 }
 
 // ═══════════════════════════════════════════════════════════════════

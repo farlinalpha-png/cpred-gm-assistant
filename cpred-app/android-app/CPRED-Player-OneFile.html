@@ -884,6 +884,103 @@ Object.entries(CPRED_DATA.master.vehicles).forEach(([cat, items]) => {
 // Merge quick-ref rule tables into the rules DB
 CPRED_DATA.master.refRules.forEach(r => CPRED_DATA.rulesDB.push(r));
 
+// ── CORE RULEBOOK MECHANICS (paraphrased summaries with page/section refs) ──
+// Not verbatim book text — condensed table-side rulings from the CP:R core book.
+CPRED_DATA.rulesDB.push(
+ {
+  q: "Improvement Points (IP): how do you earn them?",
+  a: "The GM awards IP at the end of a session or job based on what the crew accomplished — completing objectives, good roleplay, surviving against the odds, and hitting beats that fit your Role earn more. IP is per-character; track it on the sheet's IP field. (Core book, It's All About the Experience, ~p.410)"
+ },
+ {
+  q: "Improvement Points (IP): spending — cost to improve a skill or Role Ability (p.412)",
+  a: "IMPROVING A SKILL: cost = the LEVEL YOU ARE BUYING x 20 IP.\n• Lvl 2 = 40 IP • Lvl 3 = 60 IP • Lvl 4 = 80 IP • Lvl 5 = 100 IP • Lvl 6 = 120 IP • Lvl 7 = 140 IP • Lvl 8 = 160 IP • Lvl 9 = 180 IP • Lvl 10 = 200 IP\nDOUBLE the cost for (x2) skills: Autofire, Martial Arts, Demolitions, Electronics/Security Tech, Heavy Weapons, Paramedic, Pilot Air Vehicle.\nIMPROVING A ROLE ABILITY: cost = the RANK YOU ARE BUYING x 60 IP (Rank 5 = 300 IP, Rank 6 = 360 IP...).\nSTATs cannot be raised with IP. (Core book p.412)"
+ },
+ {
+  q: "Skill check basics and DV difficulty ladder",
+  a: "Check = 1d10 + STAT + Skill level vs a Difficulty Value. DV ladder: Everyday 13 · Difficult 15 · Professional 17 · Heroic 21 · Incredible 24 · Legendary 29. A natural 10 crits: roll another d10 and add it. A natural 1 fumbles: roll another d10 and subtract. Beat the DV — ties lose for the attacker/actor. (Core book, Getting It Done)"
+ },
+ {
+  q: "Combat turn: what can I do on my turn? Initiative?",
+  a: "Initiative: 1d10 + REF, highest first. On your turn you get one MOVE ACTION (up to MOVE x 2 m/yds) and one ACTION (attack, aim, reload, grab, First Aid, use a skill, run again, etc.). You may split your movement around your Action. (Core book, Friday Night Firefight)"
+ },
+ {
+  q: "Ranged attacks and Autofire",
+  a: "Single shot: 1d10 + REF + weapon skill vs the DV for that weapon type at that range band (see weapon range table). Autofire: only SMGs/ARs; roll vs the Autofire DV for the range; if you hit, damage = 2d6 x the amount you beat the DV by, capped at the weapon's autofire multiplier (SMG x3, AR x4). Suppressive fire forces a WILL check or targets must run for cover. (Core book, FNFF: Autofire)"
+ },
+ {
+  q: "Melee attacks and Evasion — how does defense work?",
+  a: "Melee attack: 1d10 + DEX + Brawling/Melee Weapon/Martial Arts vs the defender's 1d10 + DEX + Evasion. The attacker must BEAT the defense roll — the defender wins ties. Characters with REF 8+ may also attempt to dodge bullets with Evasion. (Core book, FNFF)"
+ },
+ {
+  q: "Aimed shots and headshots",
+  a: "Aimed shot: -8 to your attack check to target a specific location. Headshot: damage that gets through the head armor SP is DOUBLED. Held items can be shot away; legs can be targeted to force a Critical Injury on 2 sixes as normal. Cyberware like a Targeting Scope reduces the aimed-shot penalty. (Core book, FNFF: Aimed Shots)"
+ },
+ {
+  q: "Critical Injuries and critical damage — when do they happen?",
+  a: "If you roll TWO OR MORE 6s on your damage dice, the target takes +5 bonus damage (ignores armor) and rolls a Critical Injury on the Critical Injuries table (2d6). Each Critical Injury has an ongoing effect and its own treatment DV — many need Surgery. Injuries stack. (Core book, FNFF: Critical Injuries)"
+ },
+ {
+  q: "Wound states, Death Saves, and dying",
+  a: "SERIOUSLY WOUNDED (below half max HP): -2 to all checks. MORTALLY WOUNDED (0 HP or less): -4 to all checks, MOVE halved, and you must make a DEATH SAVE at the start of each of your turns: roll 1d10, success if UNDER OR EQUAL to your BODY; each successive save this episode adds a cumulative +1 Death Save Penalty. Fail once = dead. Stabilization (First Aid/Paramedic) stops the saves. (Core book, FNFF: Death)"
+ },
+ {
+  q: "Armor, SP, and ablation",
+  a: "Armor subtracts its SP from incoming damage per location (head/body; shields have their own SP). Every time damage penetrates (deals at least 1 HP), that location's armor ablates: SP drops by 1. Armor-Piercing ammo: the armor's SP counts as HALF (round up) against the shot. Only the best armor layer counts; heavy armor penalizes REF/DEX/MOVE. (Core book, FNFF: Armor)"
+ },
+ {
+  q: "Healing and recovering HP",
+  a: "Stabilized characters heal daily. First Aid (DV13) or Paramedic stabilizes and restores some HP; a stabilized character recovers HP each day equal to their BODY while resting (halved if active). Critical Injuries must be treated separately (Paramedic/Surgery per injury, each with its own DV). Speedheal and medtech care shorten recovery. (Core book, Trauma & Recovery)"
+ },
+ {
+  q: "Humanity, cyberware installation, and cyberpsychosis",
+  a: "Max Humanity = EMP x 10. Installing cyberware costs Humanity (each item lists HL; roll or take average). Your effective EMP = current Humanity / 10 (round down). At Humanity 0 you go cyberpsycho (NPC). Humanity (not the EMP stat) is restored through therapy, at eddies and downtime cost. Removing cyberware does NOT restore Humanity on its own. (Core book, Cyberware & Humanity)"
+ },
+ {
+  q: "LUCK — how does the Luck pool work?",
+  a: "Your LUCK stat is a pool of points. Before rolling a Check, spend any number of Luck points to add +1 each to that single Check (declare before the roll). The pool refreshes at the start of each game session. Luck applies to Checks only — damage rolls and Death Saves are not Checks. (Core book, Getting It Done: Luck)"
+ },
+ {
+  q: "Facedowns and Reputation",
+  a: "Facedown: 1d10 + COOL + Reputation vs the same from your opponent. The loser must visibly back down, or fights the winner at -2 to all Checks for the rest of the encounter. Reputation is earned through jobs and publicity and ranges 1-10. (Core book, Reputation & Facedowns)"
+ },
+ {
+  q: "Netrunning basics: NET actions, Interface, meat vs NET",
+  a: "A Netrunner jacks into a NET Architecture via an Access Point. NET actions per turn come from Interface rank (1-3: 2 actions, 4-6: 3, 7+: 4). Speed = Interface + Cyberdeck bonuses for the Initiative queue. Actions: Scanner, Backdoor, Pathfinder, Sword/Banhammer attacks, Zap, defeat Black ICE by reducing REZ to 0. Your meat body is defenseless while netrunning unless you split actions. (Core book, Netrunning)"
+ },
+ {
+  q: "Economy: cost categories and typical prices",
+  a: "Price categories: Cheap 10eb · Everyday 20eb · Costly 50eb · Premium 100eb · Expensive 500eb · Very Expensive 1,000eb · Luxury 5,000eb · Super Luxury 10,000eb+. Nearly all gear in the book maps to one of these tiers. Fixers source higher tiers with their Operator rank. (Core book, The Marketplace)"
+ },
+ {
+  q: "Lifestyle and monthly costs",
+  a: "You pay monthly lifestyle (housing + food). Tiers run from Kibble (prepack nutrients, ~100eb/mo) and Generic Prepack (~300eb/mo) up through Good/Excellent fresh food and housing tiers from streets/cube hotel up to luxury condos. Failing to pay drops your tier — and your EMP can suffer from extended Kibble-only living (GM's call). (Core book, Lifestyle)"
+ },
+ {
+  q: "Drugs and addiction",
+  a: "Taking a street drug applies its effect; after it wears off, make a Resist Torture/Drugs check vs the drug's Addiction DV or become addicted — addicted characters suffer the drug's withdrawal penalty until they get a fix or kick it (a long process with checks and downtime). (Core book / street drugs sourcebooks)"
+ },
+ {
+  q: "Grappling, human shields, and chokes",
+  a: "Grab: contested Brawling checks; a grabbed target can be held, dragged (half MOVE), or used as a HUMAN SHIELD (attacks that miss you may hit them; they take the hit if you're missed by the margin). Choke: after a successful grab, each turn deal BODY damage directly (armor doesn't stop chokes). Breaking free: contested Brawling. (Core book, FNFF: Brawling)"
+ },
+ {
+  q: "Trauma Team — how does coverage work?",
+  a: "Subscription service: Executive and higher plans get an AV-4 response team to your beacon, typically arriving in minutes with armed cover and a Medtech crew. They stabilize and transport to their facility; non-subscribers pay steep cash rates or are left. Coverage tiers set response speed and what's included. (Core book, Trauma Team)"
+ },
+ {
+  q: "Stats: can I raise a STAT after character creation?",
+  a: "Not with IP. STATs are effectively fixed at creation; only specific cyberware (e.g. Grafted Muscle & Bone Lace for BODY), GM-granted story rewards, or losing Humanity (drops effective EMP) change them. Plan your 62 creation points accordingly. (Core book, Character Creation / p.412)"
+ },
+ {
+  q: "Cover and getting hit while behind it",
+  a: "Cover blocks Line of Sight or soaks damage: hard cover has its own HP pool (e.g. concrete wall high, car door lower) — damage that would hit you destroys cover HP first while you're fully behind it. You can't attack while totally behind cover; popping out lets snipers take Held Actions on you. (Core book, FNFF: Cover)"
+ },
+ {
+  q: "Reloading, changing weapons, and other common Actions",
+  a: "Each costs your Action: reload (full magazine), draw/holster + attack combos are not free — drawing a weapon is part of an attack Action once per fight (GM's call), First Aid, stabilizing an ally, throwing a grenade (Athletics vs DV by range), activating many cyberware systems. Move Action is separate and can't be traded for a second Action — but you CAN run twice (use your Action to move again). (Core book, FNFF: Actions)"
+ }
+);
+
 if (typeof module !== 'undefined') module.exports = CPRED_DATA;
 
 </script>
@@ -1010,7 +1107,8 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
         <div><label>Reputation</label><input type="number" id="c-rep" oninput="F('rep',+this.value)"></div>
         <div><label>Eddies (€$)</label><input type="number" id="c-eddies" oninput="F('eddies',+this.value)"></div>
       </div>
-      <div class="grid2" style="margin-bottom:10px">
+      <div class="grid3" style="margin-bottom:10px">
+        <div><label>Improvement Points (IP)</label><input type="number" min="0" id="c-ip" oninput="F('trackerIP',+this.value)"></div>
         <div><label>Gender / Pronouns</label><input id="c-gender" oninput="F('gender',this.value)"></div>
         <div><label>Aliases</label><input id="c-aliases" oninput="F('aliases',this.value)"></div>
       </div>
@@ -1083,6 +1181,13 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
     </div>
     <div id="sync-status" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)"></div>
   </div>
+  <div class="card" id="host-roster-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div class="card-title" style="margin:0">◈ Characters On Host — pick yours to play</div>
+      <button class="btn btn-ghost btn-xs" onclick="refreshHostRoster()">↻ Refresh</button>
+    </div>
+    <div id="host-roster"></div>
+  </div>
 </div>
 </div>
 <script>
@@ -1126,8 +1231,12 @@ const LIFEPATH_DEFS = [
   { key: 'familyBackground', label: 'Family Background', options: 'familyBackground' },
   { key: 'childhoodEnv', label: 'Childhood Environment', options: 'childhoodEnvironment' },
   { key: 'familyCrisis', label: 'Family Crisis', free: true },
-  { key: 'lifeGoals', label: 'Life Goals', free: true }
+  { key: 'lifeGoals', label: 'Life Goals', free: true },
+  { key: 'lifepathNotes', label: 'Lifepath Notes', free: true }
 ];
+
+// Skills that require a player-chosen specialization
+const SPEC_SKILL_RE = /^(Language|Local Expert|Science|Play Instrument)\b/;
 
 function notify(msg, err) {
   const n = document.createElement('div');
@@ -1139,9 +1248,9 @@ function notify(msg, err) {
 
 function blank() {
   return { id: String(Date.now()), name: 'New Edgerunner', handle: '', role: 'Solo',
-    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4,
+    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4, trackerIP: 0,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    skills: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
+    skills: {}, skillSpecs: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
     weapons: [], armorList: [], armor: { head:'', headSP:0, body:'', bodySP:0, shield:'', shieldSP:0 },
     cyberware: [], gear: [], netPrograms: [], vehicles: [], updatedAt: Date.now() };
 }
@@ -1333,6 +1442,7 @@ function fillIdentity() {
   document.getElementById('c-age').value = cur.age || 25;
   document.getElementById('c-rep').value = cur.rep || 0;
   document.getElementById('c-eddies').value = cur.eddies || 0;
+  document.getElementById('c-ip').value = cur.trackerIP || 0;
   document.getElementById('c-gender').value = cur.gender || '';
   document.getElementById('c-aliases').value = cur.aliases || '';
   document.getElementById('c-notes').value = cur.notes || '';
@@ -1343,6 +1453,20 @@ function fillRoleBlurb() {
   const det = CPRED_DATA.roleAbilityDetails[cur.role] || {};
   document.getElementById('role-ability-blurb').innerHTML = det.name ?
     `<span class="badge badge-gold">${det.name}</span> ${det.how || ''}` : '';
+}
+
+// ── Sub-skill (specialization) fields ────────────────────────────────
+function setSkillSpec(name, v) {
+  if (!cur.skillSpecs) cur.skillSpecs = {};
+  cur.skillSpecs[name] = v;
+  save();
+}
+
+function skillSpecInput(name) {
+  const val = (cur.skillSpecs && cur.skillSpecs[name]) || '';
+  return `<input value="${val.replace(/"/g, '&quot;')}" placeholder="which one?"
+    style="display:block;width:95%;margin-top:2px;background:transparent;border:none;border-radius:0;border-bottom:1px dashed var(--gold);color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:9px;padding:0 2px;outline:none"
+    oninput="setSkillSpec('${name.replace(/'/g, "\\'")}', this.value)">`;
 }
 
 // ── Stats & Skills (full grid, like the GM app) ──────────────────────
@@ -1368,8 +1492,9 @@ function renderStatsSkills() {
           ${skills.map(sk => {
             const lvl = cur.skills[sk.name] || 0;
             const base = (eff[sk.stat] || 5) + lvl;
+            const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
             return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-              <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+              <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
               <span style="display:flex;align-items:center;gap:4px">
                 <input type="number" min="0" max="10" value="${lvl}" style="width:38px;text-align:center;font-size:10px;padding:2px"
                   onchange="setSkill('${sk.name.replace(/'/g, "\\'")}', this.value)">
@@ -1475,6 +1600,7 @@ function renderSheet() {
             <span class="badge badge-gold">${det.name || '—'} Rank ${edI('roleAbilityRank', cur.roleAbilityRank || 4, { num: true, w: '32px', center: true, color: 'var(--gold)' })}</span>
             <span class="badge badge-red">HL: ${hl} (auto)</span>
             <span class="badge badge-neon">Humanity: ${hum}/${(cur.stats.EMP || 5) * 10}</span>
+            <span class="badge badge-gold">IP: ${edI('trackerIP', cur.trackerIP || 0, { num: true, w: '44px', center: true, color: 'var(--gold)' })}</span>
           </div>
         </div>
       </div>
@@ -1529,8 +1655,9 @@ function renderSheet() {
             ${skills.map(sk => {
               const lvl = cur.skills[sk.name] || 0;
               const base = (eff[sk.stat] || 5) + lvl;
+              const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
               return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-                <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+                <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <input type="number" min="0" max="10" value="${lvl}" style="width:36px;text-align:center;font-size:10px;padding:1px"
                     onchange="setSkillSheet('${sk.name.replace(/'/g, "\\'")}', this.value)">
@@ -1793,6 +1920,7 @@ async function connectGM() {
       document.getElementById('sync-pill').classList.add('on');
       document.getElementById('sync-status').textContent = 'Connected to GM host. Characters sync automatically every 4 seconds.';
       startSync();
+      refreshHostRoster();
       notify('Connected to GM');
     }
   } catch (e) {
@@ -1810,6 +1938,50 @@ async function pushChar(c) {
       body: JSON.stringify(c)
     });
   } catch (e) { /* offline — retry on next sync tick */ }
+}
+
+// ── Host roster: pick which of the GM's loaded characters is yours ───
+let hostPCs = [];
+
+async function refreshHostRoster() {
+  const card = document.getElementById('host-roster-card');
+  if (!connected) { card.style.display = 'none'; return; }
+  try {
+    const r = await fetch('http://' + gmAddr + '/api/all');
+    const d = await r.json();
+    hostPCs = d.pcs || [];
+  } catch (e) { hostPCs = []; }
+  card.style.display = 'block';
+  const mine = new Set(chars.map(c => String(c.id)));
+  document.getElementById('host-roster').innerHTML = hostPCs.length ? hostPCs.map((p, i) => `
+    <div class="gear-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div style="min-width:0">
+        <div class="gear-name">${p.name || 'Unnamed'}</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted)">"${p.handle || ''}" · ${p.role || '—'} · HP ${p.hp !== undefined ? p.hp : '—'}/${p.maxHp || '—'}</div>
+      </div>
+      <button class="btn ${mine.has(String(p.id)) ? 'btn-ghost' : 'btn-gold'} btn-xs" onclick="claimHostChar(${i})">
+        ${mine.has(String(p.id)) ? 'Open' : '▶ Play This Character'}</button>
+    </div>`).join('') :
+    '<div style="font-family:Share Tech Mono,monospace;font-size:10px;color:var(--dim)">No characters loaded on the host yet — ask your GM to add PCs, or upload one of yours with ⇧ Upload to GM</div>';
+}
+
+function claimHostChar(i) {
+  const p = normalize(JSON.parse(JSON.stringify(hostPCs[i])));
+  const idx = chars.findIndex(c => String(c.id) === String(p.id));
+  if (idx >= 0) {
+    // Already mine — keep whichever copy is newer
+    if ((p.updatedAt || 0) > (chars[idx].updatedAt || 0)) chars[idx] = p;
+    cur = chars[idx];
+  } else {
+    chars.push(p);
+    cur = p;
+    notify('Now playing: ' + (p.name || 'Unnamed'));
+  }
+  localStorage.setItem('cpp_chars', JSON.stringify(chars));
+  renderCharList();
+  const charTab = document.querySelector('.tab-btn[data-s="char"]');
+  go('char', charTab);
+  openCharView('sheet');
 }
 
 function uploadToGM() {
@@ -1854,6 +2026,7 @@ async function connectGMQuiet() {
       connected = true;
       document.getElementById('sync-pill').textContent = 'SYNCED: ' + gmAddr;
       document.getElementById('sync-pill').classList.add('on');
+      refreshHostRoster();
     }
   } catch (e) {}
 }

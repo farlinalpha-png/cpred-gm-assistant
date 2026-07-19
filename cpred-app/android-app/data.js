@@ -877,4 +877,101 @@ Object.entries(CPRED_DATA.master.vehicles).forEach(([cat, items]) => {
 // Merge quick-ref rule tables into the rules DB
 CPRED_DATA.master.refRules.forEach(r => CPRED_DATA.rulesDB.push(r));
 
+// ── CORE RULEBOOK MECHANICS (paraphrased summaries with page/section refs) ──
+// Not verbatim book text — condensed table-side rulings from the CP:R core book.
+CPRED_DATA.rulesDB.push(
+ {
+  q: "Improvement Points (IP): how do you earn them?",
+  a: "The GM awards IP at the end of a session or job based on what the crew accomplished — completing objectives, good roleplay, surviving against the odds, and hitting beats that fit your Role earn more. IP is per-character; track it on the sheet's IP field. (Core book, It's All About the Experience, ~p.410)"
+ },
+ {
+  q: "Improvement Points (IP): spending — cost to improve a skill or Role Ability (p.412)",
+  a: "IMPROVING A SKILL: cost = the LEVEL YOU ARE BUYING x 20 IP.\n• Lvl 2 = 40 IP • Lvl 3 = 60 IP • Lvl 4 = 80 IP • Lvl 5 = 100 IP • Lvl 6 = 120 IP • Lvl 7 = 140 IP • Lvl 8 = 160 IP • Lvl 9 = 180 IP • Lvl 10 = 200 IP\nDOUBLE the cost for (x2) skills: Autofire, Martial Arts, Demolitions, Electronics/Security Tech, Heavy Weapons, Paramedic, Pilot Air Vehicle.\nIMPROVING A ROLE ABILITY: cost = the RANK YOU ARE BUYING x 60 IP (Rank 5 = 300 IP, Rank 6 = 360 IP...).\nSTATs cannot be raised with IP. (Core book p.412)"
+ },
+ {
+  q: "Skill check basics and DV difficulty ladder",
+  a: "Check = 1d10 + STAT + Skill level vs a Difficulty Value. DV ladder: Everyday 13 · Difficult 15 · Professional 17 · Heroic 21 · Incredible 24 · Legendary 29. A natural 10 crits: roll another d10 and add it. A natural 1 fumbles: roll another d10 and subtract. Beat the DV — ties lose for the attacker/actor. (Core book, Getting It Done)"
+ },
+ {
+  q: "Combat turn: what can I do on my turn? Initiative?",
+  a: "Initiative: 1d10 + REF, highest first. On your turn you get one MOVE ACTION (up to MOVE x 2 m/yds) and one ACTION (attack, aim, reload, grab, First Aid, use a skill, run again, etc.). You may split your movement around your Action. (Core book, Friday Night Firefight)"
+ },
+ {
+  q: "Ranged attacks and Autofire",
+  a: "Single shot: 1d10 + REF + weapon skill vs the DV for that weapon type at that range band (see weapon range table). Autofire: only SMGs/ARs; roll vs the Autofire DV for the range; if you hit, damage = 2d6 x the amount you beat the DV by, capped at the weapon's autofire multiplier (SMG x3, AR x4). Suppressive fire forces a WILL check or targets must run for cover. (Core book, FNFF: Autofire)"
+ },
+ {
+  q: "Melee attacks and Evasion — how does defense work?",
+  a: "Melee attack: 1d10 + DEX + Brawling/Melee Weapon/Martial Arts vs the defender's 1d10 + DEX + Evasion. The attacker must BEAT the defense roll — the defender wins ties. Characters with REF 8+ may also attempt to dodge bullets with Evasion. (Core book, FNFF)"
+ },
+ {
+  q: "Aimed shots and headshots",
+  a: "Aimed shot: -8 to your attack check to target a specific location. Headshot: damage that gets through the head armor SP is DOUBLED. Held items can be shot away; legs can be targeted to force a Critical Injury on 2 sixes as normal. Cyberware like a Targeting Scope reduces the aimed-shot penalty. (Core book, FNFF: Aimed Shots)"
+ },
+ {
+  q: "Critical Injuries and critical damage — when do they happen?",
+  a: "If you roll TWO OR MORE 6s on your damage dice, the target takes +5 bonus damage (ignores armor) and rolls a Critical Injury on the Critical Injuries table (2d6). Each Critical Injury has an ongoing effect and its own treatment DV — many need Surgery. Injuries stack. (Core book, FNFF: Critical Injuries)"
+ },
+ {
+  q: "Wound states, Death Saves, and dying",
+  a: "SERIOUSLY WOUNDED (below half max HP): -2 to all checks. MORTALLY WOUNDED (0 HP or less): -4 to all checks, MOVE halved, and you must make a DEATH SAVE at the start of each of your turns: roll 1d10, success if UNDER OR EQUAL to your BODY; each successive save this episode adds a cumulative +1 Death Save Penalty. Fail once = dead. Stabilization (First Aid/Paramedic) stops the saves. (Core book, FNFF: Death)"
+ },
+ {
+  q: "Armor, SP, and ablation",
+  a: "Armor subtracts its SP from incoming damage per location (head/body; shields have their own SP). Every time damage penetrates (deals at least 1 HP), that location's armor ablates: SP drops by 1. Armor-Piercing ammo: the armor's SP counts as HALF (round up) against the shot. Only the best armor layer counts; heavy armor penalizes REF/DEX/MOVE. (Core book, FNFF: Armor)"
+ },
+ {
+  q: "Healing and recovering HP",
+  a: "Stabilized characters heal daily. First Aid (DV13) or Paramedic stabilizes and restores some HP; a stabilized character recovers HP each day equal to their BODY while resting (halved if active). Critical Injuries must be treated separately (Paramedic/Surgery per injury, each with its own DV). Speedheal and medtech care shorten recovery. (Core book, Trauma & Recovery)"
+ },
+ {
+  q: "Humanity, cyberware installation, and cyberpsychosis",
+  a: "Max Humanity = EMP x 10. Installing cyberware costs Humanity (each item lists HL; roll or take average). Your effective EMP = current Humanity / 10 (round down). At Humanity 0 you go cyberpsycho (NPC). Humanity (not the EMP stat) is restored through therapy, at eddies and downtime cost. Removing cyberware does NOT restore Humanity on its own. (Core book, Cyberware & Humanity)"
+ },
+ {
+  q: "LUCK — how does the Luck pool work?",
+  a: "Your LUCK stat is a pool of points. Before rolling a Check, spend any number of Luck points to add +1 each to that single Check (declare before the roll). The pool refreshes at the start of each game session. Luck applies to Checks only — damage rolls and Death Saves are not Checks. (Core book, Getting It Done: Luck)"
+ },
+ {
+  q: "Facedowns and Reputation",
+  a: "Facedown: 1d10 + COOL + Reputation vs the same from your opponent. The loser must visibly back down, or fights the winner at -2 to all Checks for the rest of the encounter. Reputation is earned through jobs and publicity and ranges 1-10. (Core book, Reputation & Facedowns)"
+ },
+ {
+  q: "Netrunning basics: NET actions, Interface, meat vs NET",
+  a: "A Netrunner jacks into a NET Architecture via an Access Point. NET actions per turn come from Interface rank (1-3: 2 actions, 4-6: 3, 7+: 4). Speed = Interface + Cyberdeck bonuses for the Initiative queue. Actions: Scanner, Backdoor, Pathfinder, Sword/Banhammer attacks, Zap, defeat Black ICE by reducing REZ to 0. Your meat body is defenseless while netrunning unless you split actions. (Core book, Netrunning)"
+ },
+ {
+  q: "Economy: cost categories and typical prices",
+  a: "Price categories: Cheap 10eb · Everyday 20eb · Costly 50eb · Premium 100eb · Expensive 500eb · Very Expensive 1,000eb · Luxury 5,000eb · Super Luxury 10,000eb+. Nearly all gear in the book maps to one of these tiers. Fixers source higher tiers with their Operator rank. (Core book, The Marketplace)"
+ },
+ {
+  q: "Lifestyle and monthly costs",
+  a: "You pay monthly lifestyle (housing + food). Tiers run from Kibble (prepack nutrients, ~100eb/mo) and Generic Prepack (~300eb/mo) up through Good/Excellent fresh food and housing tiers from streets/cube hotel up to luxury condos. Failing to pay drops your tier — and your EMP can suffer from extended Kibble-only living (GM's call). (Core book, Lifestyle)"
+ },
+ {
+  q: "Drugs and addiction",
+  a: "Taking a street drug applies its effect; after it wears off, make a Resist Torture/Drugs check vs the drug's Addiction DV or become addicted — addicted characters suffer the drug's withdrawal penalty until they get a fix or kick it (a long process with checks and downtime). (Core book / street drugs sourcebooks)"
+ },
+ {
+  q: "Grappling, human shields, and chokes",
+  a: "Grab: contested Brawling checks; a grabbed target can be held, dragged (half MOVE), or used as a HUMAN SHIELD (attacks that miss you may hit them; they take the hit if you're missed by the margin). Choke: after a successful grab, each turn deal BODY damage directly (armor doesn't stop chokes). Breaking free: contested Brawling. (Core book, FNFF: Brawling)"
+ },
+ {
+  q: "Trauma Team — how does coverage work?",
+  a: "Subscription service: Executive and higher plans get an AV-4 response team to your beacon, typically arriving in minutes with armed cover and a Medtech crew. They stabilize and transport to their facility; non-subscribers pay steep cash rates or are left. Coverage tiers set response speed and what's included. (Core book, Trauma Team)"
+ },
+ {
+  q: "Stats: can I raise a STAT after character creation?",
+  a: "Not with IP. STATs are effectively fixed at creation; only specific cyberware (e.g. Grafted Muscle & Bone Lace for BODY), GM-granted story rewards, or losing Humanity (drops effective EMP) change them. Plan your 62 creation points accordingly. (Core book, Character Creation / p.412)"
+ },
+ {
+  q: "Cover and getting hit while behind it",
+  a: "Cover blocks Line of Sight or soaks damage: hard cover has its own HP pool (e.g. concrete wall high, car door lower) — damage that would hit you destroys cover HP first while you're fully behind it. You can't attack while totally behind cover; popping out lets snipers take Held Actions on you. (Core book, FNFF: Cover)"
+ },
+ {
+  q: "Reloading, changing weapons, and other common Actions",
+  a: "Each costs your Action: reload (full magazine), draw/holster + attack combos are not free — drawing a weapon is part of an attack Action once per fight (GM's call), First Aid, stabilizing an ally, throwing a grenade (Athletics vs DV by range), activating many cyberware systems. Move Action is separate and can't be traded for a second Action — but you CAN run twice (use your Action to move again). (Core book, FNFF: Actions)"
+ }
+);
+
 if (typeof module !== 'undefined') module.exports = CPRED_DATA;

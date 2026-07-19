@@ -38,8 +38,12 @@ const LIFEPATH_DEFS = [
   { key: 'familyBackground', label: 'Family Background', options: 'familyBackground' },
   { key: 'childhoodEnv', label: 'Childhood Environment', options: 'childhoodEnvironment' },
   { key: 'familyCrisis', label: 'Family Crisis', free: true },
-  { key: 'lifeGoals', label: 'Life Goals', free: true }
+  { key: 'lifeGoals', label: 'Life Goals', free: true },
+  { key: 'lifepathNotes', label: 'Lifepath Notes', free: true }
 ];
+
+// Skills that require a player-chosen specialization
+const SPEC_SKILL_RE = /^(Language|Local Expert|Science|Play Instrument)\b/;
 
 function notify(msg, err) {
   const n = document.createElement('div');
@@ -51,9 +55,9 @@ function notify(msg, err) {
 
 function blank() {
   return { id: String(Date.now()), name: 'New Edgerunner', handle: '', role: 'Solo',
-    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4,
+    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4, trackerIP: 0,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    skills: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
+    skills: {}, skillSpecs: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
     weapons: [], armorList: [], armor: { head:'', headSP:0, body:'', bodySP:0, shield:'', shieldSP:0 },
     cyberware: [], gear: [], netPrograms: [], vehicles: [], updatedAt: Date.now() };
 }
@@ -245,6 +249,7 @@ function fillIdentity() {
   document.getElementById('c-age').value = cur.age || 25;
   document.getElementById('c-rep').value = cur.rep || 0;
   document.getElementById('c-eddies').value = cur.eddies || 0;
+  document.getElementById('c-ip').value = cur.trackerIP || 0;
   document.getElementById('c-gender').value = cur.gender || '';
   document.getElementById('c-aliases').value = cur.aliases || '';
   document.getElementById('c-notes').value = cur.notes || '';
@@ -255,6 +260,20 @@ function fillRoleBlurb() {
   const det = CPRED_DATA.roleAbilityDetails[cur.role] || {};
   document.getElementById('role-ability-blurb').innerHTML = det.name ?
     `<span class="badge badge-gold">${det.name}</span> ${det.how || ''}` : '';
+}
+
+// ── Sub-skill (specialization) fields ────────────────────────────────
+function setSkillSpec(name, v) {
+  if (!cur.skillSpecs) cur.skillSpecs = {};
+  cur.skillSpecs[name] = v;
+  save();
+}
+
+function skillSpecInput(name) {
+  const val = (cur.skillSpecs && cur.skillSpecs[name]) || '';
+  return `<input value="${val.replace(/"/g, '&quot;')}" placeholder="which one?"
+    style="display:block;width:95%;margin-top:2px;background:transparent;border:none;border-radius:0;border-bottom:1px dashed var(--gold);color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:9px;padding:0 2px;outline:none"
+    oninput="setSkillSpec('${name.replace(/'/g, "\\'")}', this.value)">`;
 }
 
 // ── Stats & Skills (full grid, like the GM app) ──────────────────────
@@ -280,8 +299,9 @@ function renderStatsSkills() {
           ${skills.map(sk => {
             const lvl = cur.skills[sk.name] || 0;
             const base = (eff[sk.stat] || 5) + lvl;
+            const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
             return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-              <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+              <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
               <span style="display:flex;align-items:center;gap:4px">
                 <input type="number" min="0" max="10" value="${lvl}" style="width:38px;text-align:center;font-size:10px;padding:2px"
                   onchange="setSkill('${sk.name.replace(/'/g, "\\'")}', this.value)">
@@ -387,6 +407,7 @@ function renderSheet() {
             <span class="badge badge-gold">${det.name || '—'} Rank ${edI('roleAbilityRank', cur.roleAbilityRank || 4, { num: true, w: '32px', center: true, color: 'var(--gold)' })}</span>
             <span class="badge badge-red">HL: ${hl} (auto)</span>
             <span class="badge badge-neon">Humanity: ${hum}/${(cur.stats.EMP || 5) * 10}</span>
+            <span class="badge badge-gold">IP: ${edI('trackerIP', cur.trackerIP || 0, { num: true, w: '44px', center: true, color: 'var(--gold)' })}</span>
           </div>
         </div>
       </div>
@@ -441,8 +462,9 @@ function renderSheet() {
             ${skills.map(sk => {
               const lvl = cur.skills[sk.name] || 0;
               const base = (eff[sk.stat] || 5) + lvl;
+              const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
               return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-                <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}</span>
+                <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <input type="number" min="0" max="10" value="${lvl}" style="width:36px;text-align:center;font-size:10px;padding:1px"
                     onchange="setSkillSheet('${sk.name.replace(/'/g, "\\'")}', this.value)">
@@ -705,6 +727,7 @@ async function connectGM() {
       document.getElementById('sync-pill').classList.add('on');
       document.getElementById('sync-status').textContent = 'Connected to GM host. Characters sync automatically every 4 seconds.';
       startSync();
+      refreshHostRoster();
       notify('Connected to GM');
     }
   } catch (e) {
@@ -722,6 +745,50 @@ async function pushChar(c) {
       body: JSON.stringify(c)
     });
   } catch (e) { /* offline — retry on next sync tick */ }
+}
+
+// ── Host roster: pick which of the GM's loaded characters is yours ───
+let hostPCs = [];
+
+async function refreshHostRoster() {
+  const card = document.getElementById('host-roster-card');
+  if (!connected) { card.style.display = 'none'; return; }
+  try {
+    const r = await fetch('http://' + gmAddr + '/api/all');
+    const d = await r.json();
+    hostPCs = d.pcs || [];
+  } catch (e) { hostPCs = []; }
+  card.style.display = 'block';
+  const mine = new Set(chars.map(c => String(c.id)));
+  document.getElementById('host-roster').innerHTML = hostPCs.length ? hostPCs.map((p, i) => `
+    <div class="gear-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div style="min-width:0">
+        <div class="gear-name">${p.name || 'Unnamed'}</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted)">"${p.handle || ''}" · ${p.role || '—'} · HP ${p.hp !== undefined ? p.hp : '—'}/${p.maxHp || '—'}</div>
+      </div>
+      <button class="btn ${mine.has(String(p.id)) ? 'btn-ghost' : 'btn-gold'} btn-xs" onclick="claimHostChar(${i})">
+        ${mine.has(String(p.id)) ? 'Open' : '▶ Play This Character'}</button>
+    </div>`).join('') :
+    '<div style="font-family:Share Tech Mono,monospace;font-size:10px;color:var(--dim)">No characters loaded on the host yet — ask your GM to add PCs, or upload one of yours with ⇧ Upload to GM</div>';
+}
+
+function claimHostChar(i) {
+  const p = normalize(JSON.parse(JSON.stringify(hostPCs[i])));
+  const idx = chars.findIndex(c => String(c.id) === String(p.id));
+  if (idx >= 0) {
+    // Already mine — keep whichever copy is newer
+    if ((p.updatedAt || 0) > (chars[idx].updatedAt || 0)) chars[idx] = p;
+    cur = chars[idx];
+  } else {
+    chars.push(p);
+    cur = p;
+    notify('Now playing: ' + (p.name || 'Unnamed'));
+  }
+  localStorage.setItem('cpp_chars', JSON.stringify(chars));
+  renderCharList();
+  const charTab = document.querySelector('.tab-btn[data-s="char"]');
+  go('char', charTab);
+  openCharView('sheet');
 }
 
 function uploadToGM() {
@@ -766,6 +833,7 @@ async function connectGMQuiet() {
       connected = true;
       document.getElementById('sync-pill').textContent = 'SYNCED: ' + gmAddr;
       document.getElementById('sync-pill').classList.add('on');
+      refreshHostRoster();
     }
   } catch (e) {}
 }
