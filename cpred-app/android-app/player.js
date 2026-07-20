@@ -55,7 +55,7 @@ function notify(msg, err) {
 
 function blank() {
   return { id: String(Date.now()), name: 'New Edgerunner', handle: '', role: 'Solo',
-    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4, trackerIP: 0,
+    age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4, roleSubRanks: {}, trackerIP: 0,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
     skills: {}, skillSpecs: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
     weapons: [], armorList: [], armor: { head:'', headSP:0, body:'', bodySP:0, shield:'', shieldSP:0 },
@@ -262,6 +262,42 @@ function fillRoleBlurb() {
     `<span class="badge badge-gold">${det.name}</span> ${det.how || ''}` : '';
 }
 
+// ── Role Ability sub-allocation (Tech/Maker, Medtech/Medicine) ───────
+function setRoleSubRank(sub, val, rerender) {
+  if (!cur.roleSubRanks) cur.roleSubRanks = {};
+  const cfg = CPRED_DATA.roleSubAbilities[cur.role];
+  if (!cfg) return;
+  const rank = cur.roleAbilityRank || 4;
+  let v = Math.max(0, parseInt(val) || 0);
+  const otherUsed = cfg.subs.reduce((t, [name]) => name === sub ? t : t + (cur.roleSubRanks[name] || 0), 0);
+  if (v + otherUsed > rank) v = Math.max(0, rank - otherUsed);
+  cur.roleSubRanks[sub] = v;
+  save();
+  if (rerender && typeof window[rerender] === 'function') window[rerender]();
+}
+
+function roleSubAllocHTML(rerender) {
+  const cfg = CPRED_DATA.roleSubAbilities[cur.role];
+  if (!cfg) return '';
+  if (!cur.roleSubRanks) cur.roleSubRanks = {};
+  const rank = cur.roleAbilityRank || 4;
+  const used = cfg.subs.reduce((t, [name]) => t + (cur.roleSubRanks[name] || 0), 0);
+  const remaining = rank - used;
+  const remColor = remaining < 0 ? 'var(--red)' : remaining > 0 ? 'var(--gold)' : 'var(--green)';
+  return `
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px">Distribute ${cfg.ability} Rank (${rank} pts) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div class="grid2">
+      ${cfg.subs.map(([name, desc]) => `
+        <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${name}</span>
+            <input type="number" min="0" max="${rank}" value="${cur.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+          </div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5">${desc}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
 // ── Sub-skill (specialization) fields ────────────────────────────────
 function setSkillSpec(name, v) {
   if (!cur.skillSpecs) cur.skillSpecs = {};
@@ -366,6 +402,12 @@ function setPathV(el, path, isNum) {
   for (let i = 0; i < parts.length - 1; i++) { if (!o[parts[i]]) o[parts[i]] = {}; o = o[parts[i]]; }
   o[parts[parts.length - 1]] = v;
   save(); renderCharList();
+  // Refresh the sheet when the role rank changes so the sub-allocation math
+  // updates (debounced so typing doesn't steal focus)
+  if (path === 'roleAbilityRank') {
+    clearTimeout(window._sheetRankTimer);
+    window._sheetRankTimer = setTimeout(() => { if (charSub === 'sheet') renderSheet(); }, 900);
+  }
 }
 
 function edI(path, val, opts = {}) {
@@ -475,9 +517,10 @@ function renderSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Role Ability: ${det.name || '—'}</div>
+      <div class="cs-title">Role Ability: ${det.name || '—'} (Rank ${cur.roleAbilityRank || 4})</div>
       <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#b0b0c8;line-height:1.8">${det.how || ''}</div>
       ${det.ranks ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);line-height:1.7;margin-top:6px">${det.ranks}</div>` : ''}
+      ${roleSubAllocHTML('renderSheet')}
     </div>
 
     ${(cur.cyberware || []).length ? `<div class="cs-section">

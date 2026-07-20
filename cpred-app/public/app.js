@@ -32,7 +32,7 @@ function newBlankChar() {
     age: 25, gender: '', aliases: '', notes: '',
     rep: 0, eddies: 500,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    roleAbilityRank: 4,
+    roleAbilityRank: 4, roleSubRanks: {},
     skills: {}, skillSpecs: {},
     hp: 40, maxHp: 40, wounds: 0,
     humanity: 50, maxHumanity: 50,
@@ -205,8 +205,18 @@ function goWizardStep(step) {
     document.getElementById('step1-pregen-section').style.display = isPregen ? 'block' : 'none';
     document.getElementById('step1-role-section').style.display = isPregen ? 'none' : 'block';
   }
+  if (step === 3) renderWizardRoleAlloc();
   if (step === 6) buildStartingGearList();
   if (step === 7) buildDoneSummary();
+}
+
+// Renders the role sub-ability allocation inside the wizard's stats step
+function renderWizardRoleAlloc() {
+  const box = document.getElementById('c-role-suballoc');
+  if (!box) return;
+  const rankInput = document.getElementById('c-role-rank');
+  if (rankInput) char.roleAbilityRank = parseInt(rankInput.value) || char.roleAbilityRank || 4;
+  box.innerHTML = CPRED_DATA.roleSubAbilities[char.role] ? roleSubAllocHTML('renderWizardRoleAlloc') : '';
 }
 
 function wizardNext() {
@@ -1515,6 +1525,28 @@ async function lookupRule() {
 // ── Utility ────────────────────────────────────────────────────────
 function safeName(n) { return n.replace(/[^a-zA-Z0-9]/g, '_'); }
 
+// ── App version + updates ──────────────────────────────────────────
+async function loadAppVersion() {
+  const el = document.getElementById('app-version');
+  let v = '';
+  if (ipc) { try { v = await callIPC('app-version'); } catch (e) { /* ignore */ } }
+  if (el) el.textContent = '// assistant' + (v ? ' v' + v : '');
+}
+
+async function checkForUpdate() {
+  const btn = document.getElementById('update-btn');
+  if (!ipc) { notify('Updates only work in the installed app (not RUN-APP / browser preview)', 'error'); return; }
+  const orig = btn.textContent;
+  btn.textContent = 'Checking…'; btn.disabled = true;
+  try {
+    const r = await callIPC('check-for-updates');
+    if (!r.success) notify(r.error || 'Update check failed', 'error');
+    else if (r.updateAvailable) notify('Update found (v' + r.latest + ') — downloading; you\'ll be prompted to restart', 'success');
+    else notify("You're on the latest version (v" + r.current + ')', 'success');
+  } catch (e) { notify('Update check failed: ' + e.message, 'error'); }
+  btn.textContent = orig; btn.disabled = false;
+}
+
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initWizard();
@@ -1525,6 +1557,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initNetBrowser();
   initArmorBrowser();
   updateSidebarIdentity();
+  loadAppVersion();
 
   // Load last char from localStorage
   const stored = localStorage.getItem('cpred_chars');
@@ -1829,6 +1862,46 @@ function renderNomadNote() {
 }
 
 // ── ROLE ABILITY VIEW ──────────────────────────────────────────────
+// ── Role Ability sub-allocation (Tech/Maker, Medtech/Medicine) ───────
+function ensureRoleSubRanks() { if (!char.roleSubRanks) char.roleSubRanks = {}; }
+
+function setRoleSubRank(sub, val, rerender) {
+  ensureRoleSubRanks();
+  const cfg = CPRED_DATA.roleSubAbilities[char.role];
+  if (!cfg) return;
+  const rank = char.roleAbilityRank || 4;
+  let v = Math.max(0, parseInt(val) || 0);
+  const otherUsed = cfg.subs.reduce((t, [name]) => name === sub ? t : t + (char.roleSubRanks[name] || 0), 0);
+  if (v + otherUsed > rank) v = Math.max(0, rank - otherUsed); // can't overspend the rank
+  char.roleSubRanks[sub] = v;
+  saveToLocalStorage();
+  if (rerender && typeof window[rerender] === 'function') window[rerender]();
+}
+
+// Renders the allocation grid; `rerender` is the global fn name to refresh after edits
+function roleSubAllocHTML(rerender) {
+  const cfg = CPRED_DATA.roleSubAbilities[char.role];
+  if (!cfg) return '';
+  ensureRoleSubRanks();
+  const rank = char.roleAbilityRank || 4;
+  const used = cfg.subs.reduce((t, [name]) => t + (char.roleSubRanks[name] || 0), 0);
+  const remaining = rank - used;
+  const remColor = remaining < 0 ? 'var(--red)' : remaining > 0 ? 'var(--gold)' : 'var(--green)';
+  return `
+    <div class="section-label" style="margin-top:14px">Distribute ${cfg.ability} Rank (${rank} points) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.6;margin:4px 0 8px">${cfg.note}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${cfg.subs.map(([name, desc]) => `
+        <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${name}</span>
+            <input type="number" min="0" max="${rank}" value="${char.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+          </div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5">${desc}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
 function renderRoleAbility() {
   const el = document.getElementById('roleability-view');
   if (!el) return;
@@ -1844,12 +1917,13 @@ function renderRoleAbility() {
         </div>
         <div style="text-align:center">
           <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px">RANK</div>
-          <input type="number" min="1" max="10" value="${rank}" style="width:64px;text-align:center;font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:var(--gold)" oninput="char.roleAbilityRank=+this.value;saveToLocalStorage();renderNomadNote&&renderNomadNote()">
+          <input type="number" min="1" max="10" value="${rank}" style="width:64px;text-align:center;font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:var(--gold)" oninput="char.roleAbilityRank=+this.value;saveToLocalStorage()" onchange="renderRoleAbility()">
         </div>
       </div>
       <div class="divider"></div>
       <div class="section-label">How To Use It</div>
       <div style="font-size:13px;line-height:1.8;color:var(--text);margin-bottom:14px">${det.how}</div>
+      ${roleSubAllocHTML('renderRoleAbility')}
       <div class="section-label">Rank Progression</div>
       <div style="font-size:13px;line-height:1.8;color:#b0b0c8">${det.ranks}</div>
       ${role === 'Nomad' ? `<div class="gm-note" style="margin-top:12px"><b>Vehicle modification:</b> open the Vehicles section — as a Nomad your Moto rank halves upgrade material costs and adds to Vehicle Tech installation checks.</div>` : ''}
@@ -2263,8 +2337,9 @@ function sheetEdit(path, value, isNum) {
   obj[keys[keys.length - 1]] = v;
   saveToLocalStorage();
   updateSidebarIdentity();
-  // Recompute derived on stat edits (debounced light refresh of derived line only)
-  if (path.startsWith('stats.')) {
+  // Recompute derived on stat edits, or refresh the role sub-allocation when
+  // the rank changes (debounced so typing doesn't steal focus)
+  if (path.startsWith('stats.') || path === 'roleAbilityRank') {
     clearTimeout(window._sheetDeriveTimer);
     window._sheetDeriveTimer = setTimeout(() => renderFullSheet(), 900);
   }
@@ -2375,8 +2450,9 @@ function renderFullSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Role Ability: ${det.name || '—'}</div>
+      <div class="cs-title">Role Ability: ${det.name || '—'} (Rank ${char.roleAbilityRank||4})</div>
       <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#b0b0c8;line-height:1.8">${det.how || ''}</div>
+      ${roleSubAllocHTML('renderFullSheet')}
     </div>
 
     ${char.cyberware.length ? `<div class="cs-section">

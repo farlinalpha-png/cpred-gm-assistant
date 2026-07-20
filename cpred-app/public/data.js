@@ -634,6 +634,33 @@ CPRED_DATA.roleAbilityDetails = {
   Rockerboy: { name: "Charismatic Impact", how: "Sway crowds and individuals with your art and presence. Rank determines audience size you can influence (fans at Rank 1, whole venues by mid-rank, city-wide movements at Rank 10) and lets you incite, calm, or rally them - or call on devoted fans for help.", ranks: "Rank 4: pack a club and start local movements. Rank 7: your word moves districts. Rank 10: you can spark a revolution." }
 };
 
+// Roles whose Role Ability Rank is permanently SPLIT among named sub-abilities
+// at character creation and on each Rank increase (per CP:R). Only Tech (Maker)
+// and Medtech (Medicine) split their rank this way; other roles apply the whole
+// rank as a single value (Solo's Combat Awareness redistributes each turn, so it
+// is not a fixed creation allocation).
+CPRED_DATA.roleSubAbilities = {
+  Tech: {
+    ability: "Maker",
+    note: "Distribute your Maker Rank among these four specialties. Each specialty adds its level as a bonus to those checks and gates the size of job you can attempt.",
+    subs: [
+      ["Field Expertise", "Repair and jury-rig existing tech"],
+      ["Upgrade Expertise", "Improve items — add a feature or raise quality tier"],
+      ["Fabrication Expertise", "Build items from scratch"],
+      ["Invention Expertise", "Invent entirely new items"]
+    ]
+  },
+  Medtech: {
+    ability: "Medicine",
+    note: "Distribute your Medicine Rank among these three areas. Surgery level gates which Critical Injuries you can treat.",
+    subs: [
+      ["Surgery", "Treat Critical Injuries needing surgery; stabilize the dying"],
+      ["Pharmaceuticals", "Craft drugs and antidotes"],
+      ["Cryosystem Operation", "Run cryopumps and cryotanks to hold the near-dead"]
+    ]
+  }
+};
+
 // Stat/skill modifiers applied automatically when the item is installed/equipped
 CPRED_DATA.itemMods = {
   "Grafted Muscle & Bone Lace": { BODY: 2, note: "+2 Brawling damage" },

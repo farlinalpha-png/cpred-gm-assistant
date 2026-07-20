@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CP:RED GM Assistant v2.045</title>
+<title>CP:RED GM Assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="data.js"></script>
@@ -212,7 +212,7 @@ input[type=number]{text-align:center}
 <!-- TOPBAR -->
 <div id="topbar">
   <div class="logo">CP:RED GM</div>
-  <div class="logo-sub">// assistant v2.045</div>
+  <div class="logo-sub" id="app-version">// assistant</div>
   <div class="topnav">
     <div class="topnav-item active" data-panel="characters" onclick="switchTopPanel('characters',this)">Characters</div>
     <div class="topnav-item" data-panel="npcs" onclick="switchTopPanel('npcs',this)">NPC Generator</div>
@@ -221,6 +221,7 @@ input[type=number]{text-align:center}
   </div>
   <div id="host-status" style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-left:8px"></div>
   <div class="topbar-actions">
+    <button class="tb-btn" id="update-btn" onclick="checkForUpdate()" title="Check GitHub for a newer version and install it">Check for Update</button>
     <button class="tb-btn" id="host-btn" onclick="toggleHost()" style="color:var(--gold);border-color:rgba(255,214,0,0.4)">Host Session</button>
     <button class="tb-btn" onclick="newCharacter()">+ New</button>
     <button class="tb-btn" onclick="loadCharacter()">Load</button>
@@ -384,7 +385,8 @@ input[type=number]{text-align:center}
           <div class="stat-box"><div class="stat-box-label">Humanity</div><div class="stat-box-val" id="derived-hum">50</div></div>
         </div>
         <div style="margin-top:10px">
-          <div class="field"><label>Role Ability Rank (1-10)</label><input type="number" id="c-role-rank" value="4" min="1" max="10" style="width:80px;text-align:center;font-family:'Orbitron',monospace;font-size:16px;color:var(--neon)"></div>
+          <div class="field"><label>Role Ability Rank (1-10)</label><input type="number" id="c-role-rank" value="4" min="1" max="10" style="width:80px;text-align:center;font-family:'Orbitron',monospace;font-size:16px;color:var(--neon)" oninput="char.roleAbilityRank=+this.value" onchange="renderWizardRoleAlloc()"></div>
+          <div id="c-role-suballoc" style="margin-top:10px"></div>
         </div>
       </div>
       <div class="actions-row" style="justify-content:space-between">

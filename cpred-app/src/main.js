@@ -72,10 +72,26 @@ function initAutoUpdater() {
   autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('[autoUpdater] check failed', err));
 }
 
+// Report the real installed version (falls back to package.json when running unpackaged)
+ipcMain.handle('app-version', () => {
+  try { return app.getVersion(); }
+  catch { return require('../package.json').version; }
+});
+
+// Force an update check. electron-updater sets downloadPromise when it finds a
+// newer release and (autoDownload) begins pulling it; 'update-downloaded' then
+// fires the restart prompt. Returns a clear result so the button can report back.
 ipcMain.handle('check-for-updates', async () => {
-  if (!app.isPackaged) return { success: false, error: 'Updates are only checked in the packaged app.' };
-  try { await autoUpdater.checkForUpdatesAndNotify(); return { success: true }; }
-  catch (e) { return { success: false, error: e.message }; }
+  const current = app.getVersion();
+  if (!app.isPackaged) return { success: false, error: 'Updates only work in the installed app — the RUN-APP / dev build has no update feed.', current };
+  try {
+    const r = await autoUpdater.checkForUpdates();
+    const latest = r && r.updateInfo ? r.updateInfo.version : current;
+    const updateAvailable = !!(r && r.downloadPromise);
+    return { success: true, current, latest, updateAvailable };
+  } catch (e) {
+    return { success: false, error: e.message, current };
+  }
 });
 
 app.whenReady().then(() => { ensureDirs(); createWindow(); initAutoUpdater(); });
