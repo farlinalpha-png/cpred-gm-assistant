@@ -729,7 +729,7 @@ function renderOwned() {
         <button class="btn btn-red btn-xs" onclick="ownedList().splice(${i},1);save();renderOwned()">✕</button>
       </div>
       ${(it.upgrades||[]).map((u, ui) => `
-        <div class="upgrade-row"><span>▸ ${u.name}${u.effect?' — '+u.effect:''}</span>
+        <div class="upgrade-row"><span>▸ ${u.name}${u.effect?' — '+u.effect:''}${u.mods && modsToStr(u.mods)?` <span style="color:var(--green)">[${modsToStr(u.mods)}]</span>`:''}</span>
         <button class="btn btn-red btn-xs" onclick="ownedList()[${i}].upgrades.splice(${ui},1);save();renderOwned()">✕</button></div>`).join('')}
       <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
         <button class="btn btn-outline btn-xs" onclick="showUpgradePicker(${i})">+ Add Upgrade/Option</button>
@@ -1047,12 +1047,13 @@ function addCustomUpgrade(i) {
   el.style.display = 'block';
   el.innerHTML = `
     <div style="background:rgba(0,229,255,0.04);border:1px dashed var(--neon);border-radius:4px;padding:8px">
-      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--neon);letter-spacing:1px;margin-bottom:6px">CUSTOM UPGRADE / OPTION</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--neon);letter-spacing:1px;margin-bottom:6px">CUSTOM UPGRADE / OPTION — add as many as you like</div>
       <label>Name</label><input id="cup-name-${i}" placeholder="e.g. Stealth Coating" style="margin-bottom:6px">
-      <label>Effect / Notes</label><input id="cup-eff-${i}" placeholder="e.g. -2 to spot vehicle at night" style="margin-bottom:8px">
+      <label>Effect / Notes</label><input id="cup-eff-${i}" placeholder="e.g. -2 to spot vehicle at night" style="margin-bottom:6px">
+      <label>Modifiers to Stats / Skills (e.g. +1 REF, +2 Handgun)</label><input id="cup-mods-${i}" placeholder="+1 COOL, +1 Stealth" style="margin-bottom:8px">
       <div style="display:flex;gap:6px">
         <button class="btn btn-primary btn-xs" onclick="saveCustomUpgrade(${i})">Save To Sheet</button>
-        <button class="btn btn-ghost btn-xs" onclick="document.getElementById('upg-picker-${i}').style.display='none'">Cancel</button>
+        <button class="btn btn-ghost btn-xs" onclick="document.getElementById('upg-picker-${i}').style.display='none'">Close</button>
       </div>
     </div>`;
   setTimeout(() => document.getElementById('cup-name-' + i)?.focus(), 50);
@@ -1061,10 +1062,18 @@ function addCustomUpgrade(i) {
 function saveCustomUpgrade(i) {
   const name = document.getElementById('cup-name-' + i)?.value.trim();
   const effect = document.getElementById('cup-eff-' + i)?.value.trim() || '';
+  const modsRaw = document.getElementById('cup-mods-' + i)?.value.trim() || '';
   if (!name) { notify('Name required', true); return; }
   const it = ownedList()[i];
   if (!it.upgrades) it.upgrades = [];
-  it.upgrades.push({ name, effect, custom: true });
+  const upg = { name, effect, custom: true };
+  if (modsRaw) upg.mods = parseItemMods(modsRaw);
+  it.upgrades.push(upg);
   save(); renderOwned();
-  notify('Custom upgrade saved');
+  // Re-open the form so several options can be stacked quickly
+  addCustomUpgrade(i);
+  const modStr = upg.mods ? modsToStr(upg.mods) : '';
+  notify('Option added' + (modStr ? ' (' + modStr + ')' : ''));
+  if (charSub === 'stats') renderStatsSkills();
+  if (charSub === 'sheet') renderSheet();
 }

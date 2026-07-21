@@ -2548,7 +2548,7 @@ function renderFullSheet() {
           <button class="btn btn-xs btn-red" style="position:absolute;top:4px;right:4px" onclick="char.cyberware.splice(${i},1);saveToLocalStorage();renderFullSheet()">✕</button>
           <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon);padding-right:24px">${c.name}</div>
           <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl}${CPRED_DATA.itemMods[c.name]?' · '+(CPRED_DATA.itemMods[c.name].skillNote||CPRED_DATA.itemMods[c.name].note||'stat mod'):''}</div>
-          ${c.upgrades && c.upgrades.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px;padding-right:24px">◆ ${c.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '')).join(' · ')}</div>` : ''}
+          ${c.upgrades && c.upgrades.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px;padding-right:24px">◆ ${c.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '') + (u.mods && modsToStr(u.mods) ? ' [' + modsToStr(u.mods) + ']' : '')).join(' · ')}</div>` : ''}
         </div>`).join('')}</div></div>` : ''}
 
     ${char.vehicles && char.vehicles.length ? `<div class="cs-section">
@@ -2817,11 +2817,14 @@ function upgradePanelHTML(listKey, idx) {
 }
 
 function upgradeRowsHTML(item) {
-  return (item.upgrades || []).map((u, ui) => `
+  return (item.upgrades || []).map((u, ui) => {
+    const modStr = u.mods ? modsToStr(u.mods) : '';
+    return `
     <div style="background:rgba(255,214,0,0.05);border-left:2px solid var(--gold);padding:3px 8px;margin:2px 0 2px 10px;font-family:'Share Tech Mono',monospace;font-size:9px;color:#c0b060;display:flex;justify-content:space-between" onclick="event.stopPropagation()">
-      <span>▸ ${u.name}${u.effect ? ' — ' + u.effect : ''}${u.custom ? ' (custom)' : ''}</span>
+      <span>▸ ${u.name}${u.effect ? ' — ' + u.effect : ''}${modStr ? ` <span style="color:var(--green)">[${modStr}]</span>` : ''}${u.custom ? ' (custom)' : ''}</span>
       <span data-upg-remove="${ui}" style="cursor:pointer;color:var(--red)">✕</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function listForKey(listKey) {
@@ -3361,12 +3364,13 @@ function gmCustomUpgrade(listKey, idx) {
   panel.style.display = 'block';
   panel.innerHTML = `
     <div style="background:rgba(0,229,255,0.04);border:1px dashed var(--neon);border-radius:4px;padding:8px">
-      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--neon);letter-spacing:1px;margin-bottom:6px">CUSTOM UPGRADE / OPTION</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--neon);letter-spacing:1px;margin-bottom:6px">CUSTOM UPGRADE / OPTION — add as many as you like</div>
       <div class="field" style="margin-bottom:6px"><label>Name</label><input id="cust-upg-name-${listKey}-${idx}" placeholder="e.g. Stealth Coating"></div>
       <div class="field" style="margin-bottom:6px"><label>Effect / Notes</label><input id="cust-upg-eff-${listKey}-${idx}" placeholder="e.g. -2 to spot vehicle at night"></div>
+      <div class="field" style="margin-bottom:6px"><label>Modifiers to Stats / Skills (e.g. +1 REF, +2 Handgun)</label><input id="cust-upg-mods-${listKey}-${idx}" placeholder="+1 COOL, +1 Stealth"></div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-primary btn-xs" onclick="gmSaveCustomUpgrade('${listKey}',${idx})">Save To Sheet</button>
-        <button class="btn btn-ghost btn-xs" onclick="document.getElementById('gm-upg-${listKey}-${idx}').style.display='none'">Cancel</button>
+        <button class="btn btn-ghost btn-xs" onclick="document.getElementById('gm-upg-${listKey}-${idx}').style.display='none'">Close</button>
       </div>
     </div>`;
   setTimeout(() => document.getElementById(`cust-upg-name-${listKey}-${idx}`)?.focus(), 50);
@@ -3375,14 +3379,22 @@ function gmCustomUpgrade(listKey, idx) {
 function gmSaveCustomUpgrade(listKey, idx) {
   const name = document.getElementById(`cust-upg-name-${listKey}-${idx}`)?.value.trim();
   const effect = document.getElementById(`cust-upg-eff-${listKey}-${idx}`)?.value.trim() || '';
+  const modsRaw = document.getElementById(`cust-upg-mods-${listKey}-${idx}`)?.value.trim() || '';
   if (!name) { notify('Upgrade name required', 'error'); return; }
   const it = listForKey(listKey)[idx];
   if (!it) return;
   if (!it.upgrades) it.upgrades = [];
-  it.upgrades.push({ name, effect, custom: true });
+  const upg = { name, effect, custom: true };
+  if (modsRaw) upg.mods = parseItemMods(modsRaw);
+  it.upgrades.push(upg);
   saveToLocalStorage();
   refreshOwned(listKey);
-  notify('Custom upgrade saved to sheet', 'success');
+  // Re-open the form so several options can be stacked quickly
+  gmCustomUpgrade(listKey, idx);
+  const modStr = upg.mods ? modsToStr(upg.mods) : '';
+  notify('Option added: ' + name + (modStr ? ' (' + modStr + ')' : ''), 'success');
+  if (activeSection === 'stats') renderStatsView();
+  if (activeSection === 'sheet') renderFullSheet();
 }
 
 // ── FIX 1: NPC generator — Save + Send To Session Tracker ──────────
