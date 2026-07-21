@@ -2159,6 +2159,7 @@ function sessionCard(c, order) {
         </div>
         <button class="btn btn-xs btn-ghost" title="Roll 1d10 + REF" onclick="sessRollInit('${c.id}')">🎲</button>
         <button class="btn btn-xs btn-outline" title="View / edit the full character sheet" onclick="sessOpenSheet('${c.id}')">Sheet</button>
+        <button class="btn btn-xs btn-ghost" title="Save this character sheet to a folder of your choosing" onclick="sessSaveToFolder('${c.id}')">Save↓</button>
         ${c.portrait ? `<img src="${c.portrait}" style="width:32px;height:32px;border-radius:4px;object-fit:cover">` : ''}
       </div>
     </div>
@@ -3066,7 +3067,12 @@ async function renderSessionTracker() {
     (all.length ? all.map(c => {
       const inSession = sessionCharIds.includes(c.id);
       const tag = c.isNPC || c._kind === 'npcs' ? '<span class="badge badge-red" style="margin-left:4px">NPC</span>' : '<span class="badge badge-neon" style="margin-left:4px">PC</span>';
-      return `<button class="btn ${inSession ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="toggleSessionChar('${c.id}')">${inSession ? '✓ ' : '+ '}${c.name || 'Unnamed'}${tag}</button>`;
+      if (!inSession) return `<button class="btn btn-ghost btn-sm" onclick="toggleSessionChar('${c.id}')">+ ${c.name || 'Unnamed'}${tag}</button>`;
+      // In-session: name chip + a red ✕ to remove it from the session
+      return `<span style="display:inline-flex;align-items:stretch;margin:0 4px 4px 0">
+        <button class="btn btn-primary btn-sm" style="border-top-right-radius:0;border-bottom-right-radius:0" onclick="toggleSessionChar('${c.id}')">✓ ${c.name || 'Unnamed'}${tag}</button>
+        <button class="btn btn-sm" style="background:rgba(255,23,68,0.15);color:var(--red);border:1px solid rgba(255,23,68,0.4);border-left:none;border-top-left-radius:0;border-bottom-left-radius:0;padding:0 8px" title="Remove from session" onclick="removeFromSession('${c.id}')">✕</button>
+      </span>`;
     }).join('') : '<div style="font-family:Share Tech Mono,monospace;font-size:11px;color:var(--dim)">No characters found — create PCs in Characters, NPCs in NPC Generator</div>');
 
   const grid = document.getElementById('session-tracker-grid');
@@ -3158,6 +3164,24 @@ async function sessClearInitAll() {
 // Open a session character's full sheet for mid-game viewing/editing.
 // The char keeps its _kind so saveToLocalStorage routes edits back to
 // the pcs/npcs folder store instead of localStorage.
+// Save a session character's current sheet to a folder the GM picks
+async function sessSaveToFolder(id) {
+  const all = await folderChars();
+  const c = all.find(x => String(x.id) === String(id));
+  if (!c) { notify('Character not found', 'error'); return; }
+  if (!ipc) { notify('Folder save only works in the installed app', 'error'); return; }
+  const r = await callIPC('save-char-to-folder', c);
+  if (r.success) notify(`Saved ${c.name || 'character'} → ${r.dir}`, 'success');
+  else if (r.error) notify('Save failed: ' + r.error, 'error');
+}
+
+// Remove a character from the active session (does NOT delete the character)
+function removeFromSession(id) {
+  sessionCharIds = sessionCharIds.filter(x => String(x) !== String(id));
+  localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds));
+  renderSessionTracker();
+}
+
 async function sessOpenSheet(id) {
   const all = await folderChars();
   const c = all.find(x => String(x.id) === String(id));

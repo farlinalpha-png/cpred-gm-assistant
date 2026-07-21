@@ -120,6 +120,23 @@ ipcMain.handle('pick-folder', async () => {
   return { success: true, dir: filePaths[0], chars: listDir(filePaths[0]) };
 });
 
+// Save one character's sheet as a portable JSON into a folder the GM chooses.
+// Strips runtime-only fields so the saved copy isn't tied back to the store.
+ipcMain.handle('save-char-to-folder', async (e, character) => {
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a folder to save this character sheet', properties: ['openDirectory', 'createDirectory']
+  });
+  if (!filePaths || !filePaths[0]) return { success: false };
+  try {
+    const clean = { ...character };
+    delete clean._kind; delete clean._file;
+    clean.savedAt = Date.now();
+    const file = safeName(clean.name) + '_' + (clean.id || Date.now()) + '.json';
+    fs.writeFileSync(path.join(filePaths[0], file), JSON.stringify(clean, null, 2));
+    return { success: true, dir: filePaths[0], file };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
 ipcMain.handle('open-store-folder', () => { shell.openPath(storeRoot()); return { success: true }; });
 
 // ── IPC: legacy file save/load/pdf/image (unchanged behavior) ───────

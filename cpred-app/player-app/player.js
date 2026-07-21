@@ -795,15 +795,21 @@ let hostPCs = [];
 
 async function refreshHostRoster() {
   const card = document.getElementById('host-roster-card');
-  if (!connected) { card.style.display = 'none'; return; }
+  const loader = document.getElementById('connected-loader');
+  if (!connected) {
+    if (card) card.style.display = 'none';
+    if (loader) loader.style.display = 'none';
+    return;
+  }
   try {
     const r = await fetch('http://' + gmAddr + '/api/all');
     const d = await r.json();
     hostPCs = d.pcs || [];
   } catch (e) { hostPCs = []; }
-  card.style.display = 'block';
+  if (card) card.style.display = 'block';
+  if (loader) loader.style.display = 'block';
   const mine = new Set(chars.map(c => String(c.id)));
-  document.getElementById('host-roster').innerHTML = hostPCs.length ? hostPCs.map((p, i) => `
+  const html = hostPCs.length ? hostPCs.map((p, i) => `
     <div class="gear-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <div style="min-width:0">
         <div class="gear-name">${p.name || 'Unnamed'}</div>
@@ -813,6 +819,10 @@ async function refreshHostRoster() {
         ${mine.has(String(p.id)) ? 'Open' : '▶ Play This Character'}</button>
     </div>`).join('') :
     '<div style="font-family:Share Tech Mono,monospace;font-size:10px;color:var(--dim)">No characters loaded on the host yet — ask your GM to add PCs, or upload one of yours with ⇧ Upload to GM</div>';
+  const hostEl = document.getElementById('host-roster');
+  if (hostEl) hostEl.innerHTML = html;
+  const connEl = document.getElementById('connected-roster');
+  if (connEl) connEl.innerHTML = html;
 }
 
 function claimHostChar(i) {
@@ -863,6 +873,8 @@ function startSync() {
       connected = false;
       document.getElementById('sync-pill').textContent = 'OFFLINE (retrying)';
       document.getElementById('sync-pill').classList.remove('on');
+      const loader = document.getElementById('connected-loader');
+      if (loader) loader.style.display = 'none';
       setTimeout(() => { connectGMQuiet(); }, 5000);
     }
   }, 4000);

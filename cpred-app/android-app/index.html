@@ -92,6 +92,16 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
 
 <!-- CHARACTER -->
 <div class="section active" id="s-char">
+  <!-- Connected mode: load a character from the GM host (shown only when connected) -->
+  <div class="card" id="connected-loader" style="display:none;border-color:var(--green)">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div class="card-title" style="margin:0;color:var(--green)">◈ Connected — Load a Character From Your GM</div>
+      <button class="btn btn-ghost btn-xs" onclick="refreshHostRoster()">↻ Refresh</button>
+    </div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:8px">Pick which character is yours. It loads onto this device and syncs with the GM both ways while connected.</div>
+    <div id="connected-roster"></div>
+  </div>
+
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <div class="card-title" style="margin:0">◈ My Characters</div>
