@@ -1,6 +1,6 @@
 {
   "name": "cpred-gm-assistant",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "description": "Cyberpunk RED GM & Character Assistant",
   "main": "src/main.js",
   "scripts": {
