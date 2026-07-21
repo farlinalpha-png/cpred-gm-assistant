@@ -16,13 +16,14 @@ const EQ_TABS = [
 ];
 
 // Field schemas for custom items per equipment type
+const MODS_FIELD = ['mods', 'Modifiers to Stats / Skills (e.g. +1 REF, +2 Handgun)'];
 const CUSTOM_FIELDS = {
-  weapons: [['name','Name'],['damage','Damage (e.g. 3d6)'],['rof','ROF'],['mag','Magazine'],['cost','Cost (eb)'],['features','Features/Notes']],
-  armorList: [['name','Name'],['sp','SP'],['penalty','Penalty'],['cost','Cost (eb)'],['notes','Notes']],
-  cyberware: [['name','Name'],['hl','Humanity Loss (e.g. 7 (2d6))'],['install','Install (Mall/Clinic/Hospital)'],['cost','Cost (eb)'],['description','Effect']],
-  gear: [['name','Name'],['cost','Cost (eb)'],['description','Description']],
-  netPrograms: [['name','Name'],['damage','Damage/Effect'],['cost','Cost (eb)'],['description','Description']],
-  vehicles: [['name','Name'],['sdp','SDP'],['sp','SP'],['seats','Seats'],['cost','Cost (eb)'],['description','Notes']]
+  weapons: [['name','Name'],['damage','Damage (e.g. 3d6)'],['rof','ROF'],['mag','Magazine'],['cost','Cost (eb)'],['features','Features/Notes'],MODS_FIELD],
+  armorList: [['name','Name'],['sp','SP'],['penalty','Penalty'],['cost','Cost (eb)'],['notes','Notes'],MODS_FIELD],
+  cyberware: [['name','Name'],['hl','Humanity Loss (e.g. 7 (2d6))'],['install','Install (Mall/Clinic/Hospital)'],['cost','Cost (eb)'],['description','Effect'],MODS_FIELD],
+  gear: [['name','Name'],['cost','Cost (eb)'],['description','Description'],MODS_FIELD],
+  netPrograms: [['name','Name'],['damage','Damage/Effect'],['cost','Cost (eb)'],['description','Description'],MODS_FIELD],
+  vehicles: [['name','Name'],['sdp','SDP'],['sp','SP'],['seats','Seats'],['cost','Cost (eb)'],['description','Notes'],MODS_FIELD]
 };
 
 // Same lifepath field list as the GM app's full sheet
@@ -89,23 +90,87 @@ function go(s, el) {
 }
 
 // ── Effective stats / humanity (ported from the GM app) ──────────────
+// ── Item modifiers (custom stat/skill bonuses on equipment) ─────────
+function parseItemMods(text) {
+  const mods = { stats: {}, skills: {} };
+  if (!text || typeof text !== 'string') return mods;
+  const norm = s => s.toLowerCase().replace(/\(x2\)/g, '').replace(/\*/g, '').replace(/\s+/g, ' ').trim();
+  const skillNames = Object.values(CPRED_DATA.skills).flat().map(s => s.name);
+  text.split(/[,;]+/).forEach(tok => {
+    tok = tok.trim(); if (!tok) return;
+    const m = tok.match(/([+-]?\d+)/);
+    if (!m) return;
+    const amt = parseInt(m[1]);
+    const name = tok.replace(m[0], '').replace(/[:+]/g, ' ').trim();
+    if (!name) return;
+    const stat = CPRED_DATA.stats.find(s => s.toLowerCase() === name.toLowerCase());
+    if (stat) { mods.stats[stat] = (mods.stats[stat] || 0) + amt; return; }
+    const skill = skillNames.find(sn => norm(sn) === norm(name));
+    if (skill) mods.skills[skill] = (mods.skills[skill] || 0) + amt;
+  });
+  return mods;
+}
+
+function modsToStr(mods) {
+  if (!mods) return '';
+  const parts = [];
+  Object.entries(mods.stats || {}).forEach(([s, a]) => a && parts.push(`${a > 0 ? '+' : ''}${a} ${s}`));
+  Object.entries(mods.skills || {}).forEach(([n, a]) => a && parts.push(`${a > 0 ? '+' : ''}${a} ${n}`));
+  return parts.join(', ');
+}
+
+function moddableItems(c) {
+  return [...(c.cyberware || []), ...(c.gear || []), ...(c.weapons || []), ...(c.vehicles || []), ...(c.armorList || [])];
+}
+
+function effSkillMods(c) {
+  const out = {};
+  const add = (n, a) => { if (a) out[n] = (out[n] || 0) + a; };
+  moddableItems(c).forEach(item => {
+    if (item.mods && item.mods.skills) Object.entries(item.mods.skills).forEach(([n, a]) => add(n, a));
+    (item.upgrades || []).forEach(u => { if (u.mods && u.mods.skills) Object.entries(u.mods.skills).forEach(([n, a]) => add(n, a)); });
+  });
+  return out;
+}
+
 function effStats(c) {
   const eff = { ...c.stats };
   const notes = [];
-  (c.cyberware || []).concat(c.gear || []).forEach(item => {
+  const statMods = {};
+  const bump = (s, amt, cap, label) => {
+    eff[s] = (eff[s] || 5) + amt;
+    if (cap) eff[s] = Math.min(eff[s], cap);
+    statMods[s] = (statMods[s] || 0) + amt;
+    notes.push(`${label}: ${amt > 0 ? '+' : ''}${amt} ${s}`);
+  };
+  const applyCustom = (src, label) => {
+    if (src && src.stats) Object.entries(src.stats).forEach(([s, amt]) => { if (CPRED_DATA.stats.includes(s) && amt) bump(s, amt, null, label); });
+  };
+  moddableItems(c).forEach(item => {
     const mod = CPRED_DATA.itemMods[item.name];
-    if (!mod) return;
-    CPRED_DATA.stats.forEach(s => {
-      if (mod[s]) {
-        eff[s] = (eff[s] || 5) + mod[s];
-        if (mod.cap) eff[s] = Math.min(eff[s], mod.cap);
-        notes.push(`${item.name}: +${mod[s]} ${s}`);
-      }
-    });
-    if (mod.skillNote) notes.push(`${item.name}: ${mod.skillNote}`);
-    if (mod.note) notes.push(`${item.name}: ${mod.note}`);
+    if (mod) {
+      CPRED_DATA.stats.forEach(s => { if (mod[s]) bump(s, mod[s], mod.cap, item.name); });
+      if (mod.skillNote) notes.push(`${item.name}: ${mod.skillNote}`);
+      if (mod.note) notes.push(`${item.name}: ${mod.note}`);
+    }
+    applyCustom(item.mods, item.name);
+    (item.upgrades || []).forEach(u => applyCustom(u.mods, item.name + ' · ' + u.name));
   });
-  return { eff, notes };
+  return { eff, notes, statMods };
+}
+
+// Compact list of every active equipment modifier for display
+function equipmentModList(c) {
+  const out = [];
+  moddableItems(c).forEach(item => {
+    const parts = [];
+    const gm = CPRED_DATA.itemMods[item.name];
+    if (gm) { CPRED_DATA.stats.forEach(s => { if (gm[s]) parts.push(`${gm[s] > 0 ? '+' : ''}${gm[s]} ${s}`); }); if (gm.skillNote) parts.push(gm.skillNote); }
+    if (item.mods) { const s = modsToStr(item.mods); if (s) parts.push(s); }
+    (item.upgrades || []).forEach(u => { if (u.mods) { const s = modsToStr(u.mods); if (s) parts.push(s); } });
+    if (parts.length) out.push(`${item.name}: ${parts.join(', ')}`);
+  });
+  return out;
 }
 
 function totalHL(c) {
@@ -314,38 +379,46 @@ function skillSpecInput(name) {
 
 // ── Stats & Skills (full grid, like the GM app) ──────────────────────
 function renderStatsSkills() {
-  const { eff } = effStats(cur);
+  const { eff, statMods } = effStats(cur);
+  const skillMods = effSkillMods(cur);
   const hp = 10 + 5 * (eff.BODY || 5);
+  const modList = equipmentModList(cur);
   document.getElementById('sub-stats-body').innerHTML = `
     <div class="grid5" style="margin-bottom:8px">
       ${CPRED_DATA.stats.map(s => {
         const b = cur.stats[s] || 5, e = eff[s] || b;
-        return `<div class="stat-box"><div class="stat-lbl">${s}</div>
-          <input type="number" min="1" max="10" value="${b}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:var(--neon);padding:4px 2px"
+        const modded = (statMods[s] || 0) !== 0;
+        return `<div class="stat-box"><div class="stat-lbl" style="${modded ? 'color:var(--green);font-weight:800' : ''}">${s}</div>
+          <input type="number" min="1" max="10" value="${b}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:${modded ? 'var(--green)' : 'var(--neon)'};padding:4px 2px"
             onchange="cur.stats['${s}']=+this.value;save();renderStatsSkills()">
-          ${e !== b ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--green)">eff ${e}</div>` : ''}</div>`;
+          ${modded ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--green);font-weight:800">eff ${e}</div>` : ''}</div>`;
       }).join('')}
     </div>
-    <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:12px">
+    <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:${modList.length ? '6px' : '12px'}">
       HP ${hp} · Seriously Wounded ${Math.ceil(hp / 2)} · Death Save ${eff.BODY || 5} · Humanity ${curHumanity(cur)}/${(cur.stats.EMP || 5) * 10}
     </div>
+    ${modList.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green);background:rgba(105,240,174,0.06);border:1px solid rgba(105,240,174,0.25);border-radius:4px;padding:6px 8px;margin-bottom:12px;line-height:1.6">◆ Equipment modifiers: ${modList.join(' · ')}</div>` : ''}
     <div class="grid3">
       ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
         <div><div class="skill-cat">${cat}</div>
+          <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:38px;text-align:center">LVL</span><span style="width:22px;text-align:right">MOD</span><span style="width:22px;text-align:right">BASE</span></span></div>
           ${skills.map(sk => {
             const lvl = cur.skills[sk.name] || 0;
-            const base = (eff[sk.stat] || 5) + lvl;
+            const mod = skillMods[sk.name] || 0;
+            const base = (eff[sk.stat] || 5) + lvl + mod;
+            const active = lvl > 0 || mod !== 0;
             const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
-            return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-              <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+            return `<div class="skill-row" ${active ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
+              <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:48%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
               <span style="display:flex;align-items:center;gap:4px">
                 <input type="number" min="0" max="10" value="${lvl}" style="width:38px;text-align:center;font-size:10px;padding:2px"
                   onchange="setSkill('${sk.name.replace(/'/g, "\\'")}', this.value)">
-                <span style="color:var(--gold);min-width:22px;text-align:right">${lvl > 0 ? base : '—'}</span>
+                <span title="Equipment MOD" style="width:22px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
+                <span style="width:22px;text-align:right;${mod !== 0 ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
               </span></div>`;
           }).join('')}</div>`).join('')}
     </div>
-    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">BASE = effective STAT + level. Skills marked (x2) cost double at creation.</div>`;
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is the equipment bonus. BASE = effective STAT + level + MOD.</div>`;
 }
 
 function setSkill(name, v) {
@@ -418,7 +491,8 @@ function edI(path, val, opts = {}) {
 
 function renderSheet() {
   const el = document.getElementById('sub-sheet');
-  const { eff, notes } = effStats(cur);
+  const { eff, notes, statMods } = effStats(cur);
+  const skillMods = effSkillMods(cur);
   const hp = 10 + 5 * (eff.BODY || 5);
   const hl = totalHL(cur);
   const hum = curHumanity(cur);
@@ -455,16 +529,17 @@ function renderSheet() {
       </div>
     </div>
 
-    ${notes.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold)">Equipment modifiers active: ${notes.join(' · ')}</div>` : ''}
+    ${(() => { const ml = equipmentModList(cur); return ml.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green)">◆ Equipment modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
 
     <div class="cs-section">
       <div class="cs-title">Stats (base — effective shown when modified)</div>
       <div class="grid5" style="margin-bottom:10px">
         ${CPRED_DATA.stats.map(s => {
           const b = cur.stats[s] || 5, e = eff[s] || b;
-          return `<div class="stat-box"><div class="stat-lbl">${s}</div>
-            <input type="number" min="1" max="10" value="${b}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:var(--neon);padding:4px 2px" onchange="cur.stats['${s}']=+this.value;save();renderSheet()">
-            ${e !== b ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--green)">eff ${e}</div>` : ''}</div>`;
+          const modded = (statMods[s] || 0) !== 0;
+          return `<div class="stat-box"><div class="stat-lbl" style="${modded ? 'color:var(--green);font-weight:800' : ''}">${s}</div>
+            <input type="number" min="1" max="10" value="${b}" style="text-align:center;font-family:Orbitron,monospace;font-weight:700;color:${modded ? 'var(--green)' : 'var(--neon)'};padding:4px 2px" onchange="cur.stats['${s}']=+this.value;save();renderSheet()">
+            ${modded ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--green);font-weight:800">eff ${e}</div>` : ''}</div>`;
         }).join('')}
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
@@ -497,20 +572,24 @@ function renderSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Skills — every level editable (BASE uses effective stats)</div>
+      <div class="cs-title">Skills — every level editable · MOD = equipment bonus (bold = modified)</div>
       <div class="grid3">
         ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
           <div><div class="skill-cat">${cat}</div>
+            <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:36px;text-align:center">LVL</span><span style="width:20px;text-align:right">MOD</span><span style="width:22px;text-align:right">BASE</span></span></div>
             ${skills.map(sk => {
               const lvl = cur.skills[sk.name] || 0;
-              const base = (eff[sk.stat] || 5) + lvl;
+              const mod = skillMods[sk.name] || 0;
+              const base = (eff[sk.stat] || 5) + lvl + mod;
+              const active = lvl > 0 || mod !== 0;
               const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
-              return `<div class="skill-row" ${lvl > 0 ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-                <span style="${lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:55%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+              return `<div class="skill-row" ${active ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
+                <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:44%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <input type="number" min="0" max="10" value="${lvl}" style="width:36px;text-align:center;font-size:10px;padding:1px"
                     onchange="setSkillSheet('${sk.name.replace(/'/g, "\\'")}', this.value)">
-                  <span style="color:var(--gold);min-width:22px;text-align:right">${lvl > 0 ? base : '—'}</span>
+                  <span title="Equipment MOD" style="width:20px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
+                  <span style="width:22px;text-align:right;${mod !== 0 ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
                 </span></div>`;
             }).join('')}</div>`).join('')}
       </div>
@@ -645,6 +724,7 @@ function renderOwned() {
             ${it.damage?'DMG '+it.damage+' · ':''}${it.rof?'ROF '+it.rof+' · ':''}${it.sp!==undefined&&it.sp!==''?'SP '+it.sp+' · ':''}${it.sdp?'SDP '+it.sdp+' · ':''}${it.hl?'HL '+it.hl+' · ':''}${it.cost||''}
           </div>
           ${it.description||it.features||it.notes ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:2px">${it.description||it.features||it.notes}</div>` : ''}
+          ${it.mods && modsToStr(it.mods) ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green);margin-top:2px">◆ ${modsToStr(it.mods)}</div>` : ''}
         </div>
         <button class="btn btn-red btn-xs" onclick="ownedList().splice(${i},1);save();renderOwned()">✕</button>
       </div>
@@ -732,10 +812,14 @@ function saveCustom() {
   const it = { custom: true, source: 'Custom (player-made)', upgrades: [] };
   fields.forEach(([k]) => { const v = document.getElementById('cf-' + k).value; if (v) it[k] = v; });
   if (!it.name) { notify('Name is required', true); return; }
+  if (it.mods) it.mods = parseItemMods(it.mods); // "+1 REF, +2 Handgun" → structured
   ownedList().push(it);
   save(); renderOwned();
   document.getElementById('eq-custom').style.display = 'none';
-  notify('Custom item saved to sheet');
+  const modStr = it.mods ? modsToStr(it.mods) : '';
+  notify('Custom item saved' + (modStr ? ' (' + modStr + ')' : ''));
+  if (charSub === 'stats') renderStatsSkills();
+  if (charSub === 'sheet') renderSheet();
 }
 
 // ── Rules lookup (offline) ───────────────────────────────────────────
