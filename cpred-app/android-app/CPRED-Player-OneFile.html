@@ -1105,8 +1105,9 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <div class="card-title" style="margin:0">◈ My Characters</div>
-      <div style="display:flex;gap:6px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-primary btn-xs" onclick="newChar()">+ New</button>
+        <button class="btn btn-gold btn-xs" onclick="createBlankOnSheet()" title="Start a blank character and edit it on the Full Sheet">+ Blank (sheet)</button>
         <button class="btn btn-ghost btn-xs" onclick="document.getElementById('imp').click()">Import</button>
         <input type="file" id="imp" accept=".json,.cpred" style="display:none" onchange="importChar(this)">
       </div>
@@ -1272,6 +1273,48 @@ const LIFEPATH_DEFS = [
   { key: 'lifeGoals', label: 'Life Goals', free: true },
   { key: 'lifepathNotes', label: 'Lifepath Notes', free: true }
 ];
+
+// Relationships + role-specific lifepath. The seed prompts are original
+// generic writing prompts to inspire a player's own answer — not the
+// rulebook's tables. Stored on cur.lp_* to match the GM app for sync.
+const LP_REL_FIELDS = [
+  { key: 'lp_friends', label: 'Friends', placeholder: 'Who has your back in Night City?', seeds: [
+    'An old crew-mate who still owes you their life',
+    'A fixer who throws you the jobs nobody else will take',
+    'A ripperdoc who patches you up off the books',
+    'A street kid you look out for like family',
+    'A rival who respects you enough to warn you of trouble',
+    'A bartender who hears everything and tells you most of it'
+  ] },
+  { key: 'lp_love', label: 'Tragic Love Affairs', placeholder: 'A romance that went sideways...', seeds: [
+    'They vanished after a job went wrong — you never learned why',
+    'A corp bought their loyalty and they walked away chromed and cold',
+    'You loved each other but the life kept pulling you apart',
+    'They died taking a bullet that was meant for you',
+    'It ended in betrayal, and the wound still aches',
+    'You had to leave them behind to keep them safe'
+  ] },
+  { key: 'lp_enemies', label: 'Enemies', placeholder: 'Who wants you dead or ruined?', seeds: [
+    'A gang lieutenant you humiliated in front of their crew',
+    'A corp exec whose deal you blew wide open',
+    'A former partner who thinks you sold them out',
+    'A bounty hunter working an old contract on your head',
+    'A cop who is sure you got away with something',
+    'A dealer you owe more eddies than you can ever pay'
+  ] }
+];
+const LP_ROLE_SEEDS = {
+  Solo: ['A war or gig left scars you don\'t talk about', 'You keep a private code about who you will and won\'t kill'],
+  Netrunner: ['Something you found in the NET still hunts your dreams', 'You trust your Agent more than most people'],
+  Tech: ['You built something once that got someone hurt', 'Your workshop is the only place you feel truly safe'],
+  Medtech: ['You lost a patient you swore you\'d save', 'You keep treating people who can never pay you'],
+  Media: ['A story you broke made you powerful enemies', 'You chase the truth even when it costs you everything'],
+  Exec: ['You climbed over people to get here — some are still falling', 'Your corp owns more of you than you\'d like to admit'],
+  Fixer: ['A deal gone bad still follows you around', 'You know where too many bodies are buried'],
+  Lawman: ['You bent the law once and it saved a life — or ended one', 'The badge cost you people you loved'],
+  Nomad: ['Your family and the city pull you in opposite directions', 'The road took something from you it never gave back'],
+  Rockerboy: ['A song you wrote started something bigger than you meant', 'Fame gave you a stage and took your privacy']
+};
 
 // Skills that require a player-chosen specialization
 const SPEC_SKILL_RE = /^(Language|Local Expert|Science|Play Instrument)\b/;
@@ -1484,6 +1527,18 @@ function finishCreate(c) {
 
 function createCustom() { finishCreate(blank()); }
 
+// Create a fresh character and edit it entirely on the Full Sheet (no chooser)
+function createBlankOnSheet() {
+  const c = normalize(blank());
+  c.name = ''; c.handle = '';
+  chars.push(c); cur = c;
+  localStorage.setItem('cpp_chars', JSON.stringify(chars));
+  document.getElementById('create-chooser').style.display = 'none';
+  renderCharList();
+  openCharView('sheet');
+  notify('Blank character — edit any field on the sheet');
+}
+
 function createFromPregen(i) {
   const p = CPRED_DATA.pregens[i];
   const c = { ...blank(), ...p, id: String(Date.now()),
@@ -1676,7 +1731,44 @@ function renderLifepath() {
         <button class="btn btn-ghost btn-xs" onclick="rollLifepath('${d.key}','${d.options}')">🎲</button>
       </div>
     </div>`;
-  }).join('');
+  }).join('') + lifepathRelHTML();
+}
+
+// Friends / Tragic Love Affairs / Enemies / role-specific — bound to cur.lp_*
+function lifepathRelHTML() {
+  return `
+    <div style="grid-column:1/-1;border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px">
+      <div class="card-title" style="margin-bottom:8px">◈ Relationships &amp; Role Lifepath</div>
+    </div>
+    ${LP_REL_FIELDS.map(f => `
+      <div class="lp-item">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="lp-label">${f.label}</div>
+          <button class="btn btn-ghost btn-xs" onclick="seedLifepathRel('${f.key}')">🎲</button>
+        </div>
+        <textarea style="min-height:44px;font-size:12px" placeholder="${f.placeholder}" oninput="cur.${f.key}=this.value;save()">${cur[f.key] || ''}</textarea>
+      </div>`).join('')}
+    <div class="lp-item">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="lp-label">${cur.role || 'Role'} Lifepath (role-specific)</div>
+        <button class="btn btn-ghost btn-xs" onclick="seedLifepathRole()">🎲</button>
+      </div>
+      <textarea style="min-height:44px;font-size:12px" placeholder="A defining event tied to being a ${cur.role || 'edgerunner'}..." oninput="cur.lp_roleSpecific=this.value;save()">${cur.lp_roleSpecific || ''}</textarea>
+    </div>`;
+}
+
+function seedLifepathRel(key) {
+  const f = LP_REL_FIELDS.find(x => x.key === key);
+  if (!f) return;
+  cur[key] = f.seeds[Math.floor(Math.random() * f.seeds.length)];
+  save(); renderLifepath();
+}
+
+function seedLifepathRole() {
+  const seeds = LP_ROLE_SEEDS[cur.role] || [];
+  if (!seeds.length) return;
+  cur.lp_roleSpecific = seeds[Math.floor(Math.random() * seeds.length)];
+  save(); renderLifepath();
 }
 
 function rollLifepath(key, optKey) {
@@ -1872,6 +1964,17 @@ function renderSheet() {
           <div class="lp-label">${d.label}</div>
           <input value="${String(cur.lifepath[d.key] || '').replace(/"/g, '&quot;')}" style="font-size:12px" oninput="cur.lifepath['${d.key}']=this.value;save()">
         </div>`).join('')}
+      </div>
+      <div style="border-top:1px solid var(--border);margin:10px 0 6px;padding-top:8px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);letter-spacing:1px">RELATIONSHIPS &amp; ROLE LIFEPATH</div>
+      <div class="grid2">
+        ${LP_REL_FIELDS.map(f => `<div class="lp-item">
+          <div style="display:flex;justify-content:space-between;align-items:center"><div class="lp-label">${f.label}</div><button class="btn btn-ghost btn-xs" onclick="seedLifepathRel('${f.key}')">🎲</button></div>
+          <textarea style="min-height:40px;font-size:12px" placeholder="${f.placeholder}" oninput="cur.${f.key}=this.value;save()">${cur[f.key] || ''}</textarea>
+        </div>`).join('')}
+        <div class="lp-item">
+          <div style="display:flex;justify-content:space-between;align-items:center"><div class="lp-label">${cur.role || 'Role'} Lifepath</div><button class="btn btn-ghost btn-xs" onclick="seedLifepathRole()">🎲</button></div>
+          <textarea style="min-height:40px;font-size:12px" placeholder="A defining event tied to being a ${cur.role || 'edgerunner'}..." oninput="cur.lp_roleSpecific=this.value;save()">${cur.lp_roleSpecific || ''}</textarea>
+        </div>
       </div>
     </div>
 

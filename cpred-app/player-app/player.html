@@ -99,8 +99,9 @@ label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mu
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <div class="card-title" style="margin:0">◈ My Characters</div>
-      <div style="display:flex;gap:6px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-primary btn-xs" onclick="newChar()">+ New</button>
+        <button class="btn btn-gold btn-xs" onclick="createBlankOnSheet()" title="Start a blank character and edit it on the Full Sheet">+ Blank (sheet)</button>
         <button class="btn btn-ghost btn-xs" onclick="document.getElementById('imp').click()">Import</button>
         <input type="file" id="imp" accept=".json,.cpred" style="display:none" onchange="importChar(this)">
       </div>
