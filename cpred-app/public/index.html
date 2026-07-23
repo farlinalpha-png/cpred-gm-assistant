@@ -346,8 +346,8 @@ input[type=number]{text-align:center}
       <div class="card">
         <div class="card-title">◈ Character Identity</div>
         <div class="form-grid-2">
-          <div class="field"><label>Full Name</label><input id="c-name" placeholder="Night City name" oninput="updateSidebarIdentity()"></div>
-          <div class="field"><label>Street Handle</label><input id="c-handle" placeholder="The name everyone knows" oninput="updateSidebarIdentity()"></div>
+          <div class="field"><label>Full Name</label><input id="c-name" placeholder="Night City name" oninput="char.name=this.value;updateSidebarIdentity()"></div>
+          <div class="field"><label>Street Handle</label><input id="c-handle" placeholder="The name everyone knows" oninput="char.handle=this.value;updateSidebarIdentity()"></div>
         </div>
         <div class="form-grid-3">
           <div class="field"><label>Age</label><input type="number" id="c-age" placeholder="25" min="15" max="80"></div>
@@ -420,6 +420,9 @@ input[type=number]{text-align:center}
           <button class="btn btn-gold btn-sm" onclick="randomizeAllLifepath()">🎲 Randomize All</button>
         </div>
         <div id="lifepath-fields" class="lp-grid"></div>
+        <div class="divider" style="margin:14px 0"></div>
+        <div class="card-title" style="margin-bottom:10px">◈ Relationships &amp; Role Lifepath</div>
+        <div id="lifepath-relationships"></div>
       </div>
       <div class="actions-row" style="justify-content:space-between">
         <button class="btn btn-ghost" onclick="wizardPrev()">← Back</button>
@@ -706,8 +709,9 @@ input[type=number]{text-align:center}
   <!-- SECTION: FULL SHEET -->
   <div class="panel" id="section-sheet">
     <div class="panel-header">
-      <div><div class="panel-title">Character Sheet</div><div class="panel-sub">// full view</div></div>
+      <div><div class="panel-title">Character Sheet</div><div class="panel-sub">// full view · every field editable</div></div>
       <div class="actions-row" style="margin-top:0">
+        <button class="btn btn-gold btn-sm" onclick="newBlankOnSheet()" title="Start a fresh character and edit it here, no wizard">+ New Blank (edit here)</button>
         <button class="btn btn-outline btn-sm" onclick="exportPDF()">Export PDF</button>
         <button class="btn btn-ghost btn-sm" onclick="printChar()">Print</button>
       </div>

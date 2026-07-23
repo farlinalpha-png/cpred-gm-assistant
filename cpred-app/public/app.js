@@ -107,10 +107,10 @@ function switchSection(id, el) {
 
 // ── Sidebar Identity ───────────────────────────────────────────────
 function updateSidebarIdentity() {
-  const name = document.getElementById('c-name')?.value || char.name;
-  const handle = document.getElementById('c-handle')?.value || char.handle;
-  document.getElementById('sb-name').textContent = name || 'New Edgerunner';
-  document.getElementById('sb-handle').textContent = '"' + (handle || 'Handle') + '"';
+  // Source from char (kept live by the name/handle inputs) so every load path
+  // — file, folder, session tracker — refreshes the sidebar correctly.
+  document.getElementById('sb-name').textContent = char.name || 'New Edgerunner';
+  document.getElementById('sb-handle').textContent = '"' + (char.handle || 'Handle') + '"';
   document.getElementById('sb-role').textContent = char.role || 'Solo';
 }
 
@@ -206,6 +206,7 @@ function goWizardStep(step) {
     document.getElementById('step1-role-section').style.display = isPregen ? 'none' : 'block';
   }
   if (step === 3) renderWizardRoleAlloc();
+  if (step === 5) { buildLifepathFields(); buildLifepathRelationships(); }
   if (step === 6) buildStartingGearList();
   if (step === 7) buildDoneSummary();
 }
@@ -439,6 +440,90 @@ function collectLifepathData() {
     const el = document.getElementById('lp-' + def.key);
     if (el) char.lifepath[def.key] = el.value;
   });
+}
+
+// ── Relationships + role-specific lifepath (in creation and the sheet) ──
+// The seed prompts below are original generic writing prompts to inspire a
+// player's own answer — not the rulebook's tables.
+const LP_REL_FIELDS = [
+  { key: 'lp_friends', label: 'Friends', placeholder: 'Who has your back in Night City?', seeds: [
+    'An old crew-mate who still owes you their life',
+    'A fixer who throws you the jobs nobody else will take',
+    'A ripperdoc who patches you up off the books',
+    'A street kid you look out for like family',
+    'A rival who respects you enough to warn you of trouble',
+    'A bartender who hears everything and tells you most of it'
+  ] },
+  { key: 'lp_love', label: 'Tragic Love Affairs', placeholder: 'A romance that went sideways...', seeds: [
+    'They vanished after a job went wrong — you never learned why',
+    'A corp bought their loyalty and they walked away chromed and cold',
+    'You loved each other but the life kept pulling you apart',
+    'They died taking a bullet that was meant for you',
+    'It ended in betrayal, and the wound still aches',
+    'You had to leave them behind to keep them safe'
+  ] },
+  { key: 'lp_enemies', label: 'Enemies', placeholder: 'Who wants you dead or ruined?', seeds: [
+    'A gang lieutenant you humiliated in front of their crew',
+    'A corp exec whose deal you blew wide open',
+    'A former partner who thinks you sold them out',
+    'A bounty hunter working an old contract on your head',
+    'A cop who is sure you got away with something',
+    'A dealer you owe more eddies than you can ever pay'
+  ] }
+];
+
+// Original one-line seeds keyed to each Role's flavor
+const LP_ROLE_SEEDS = {
+  Solo: ['A war or gig left scars you don\'t talk about', 'You keep a private code about who you will and won\'t kill'],
+  Netrunner: ['Something you found in the NET still hunts your dreams', 'You trust your Agent more than most people'],
+  Tech: ['You built something once that got someone hurt', 'Your workshop is the only place you feel truly safe'],
+  Medtech: ['You lost a patient you swore you\'d save', 'You keep treating people who can never pay you'],
+  Media: ['A story you broke made you powerful enemies', 'You chase the truth even when it costs you everything'],
+  Exec: ['You climbed over people to get here — some are still falling', 'Your corp owns more of you than you\'d like to admit'],
+  Fixer: ['A deal gone bad still follows you around', 'You know where too many bodies are buried'],
+  Lawman: ['You bent the law once and it saved a life — or ended one', 'The badge cost you people you loved'],
+  Nomad: ['Your family and the city pull you in opposite directions', 'The road took something from you it never gave back'],
+  Rockerboy: ['A song you wrote started something bigger than you meant', 'Fame gave you a stage and took your privacy']
+};
+
+function buildLifepathRelationships() {
+  const box = document.getElementById('lifepath-relationships');
+  if (!box) return;
+  const roleSeeds = LP_ROLE_SEEDS[char.role] || [];
+  box.innerHTML = `
+    <div class="lp-grid">
+      ${LP_REL_FIELDS.map(f => `
+        <div class="lp-item">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div class="lp-label">${f.label}</div>
+            <button class="random-btn" onclick="seedLifepathRel('${f.key}')">🎲</button>
+          </div>
+          <textarea id="wlp-${f.key}" placeholder="${f.placeholder}" style="min-height:48px;font-size:12px" oninput="char.${f.key}=this.value">${char[f.key] || ''}</textarea>
+        </div>`).join('')}
+      <div class="lp-item">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div class="lp-label">${char.role || 'Role'} Lifepath (role-specific)</div>
+          <button class="random-btn" onclick="seedLifepathRole()">🎲</button>
+        </div>
+        <textarea id="wlp-lp_roleSpecific" placeholder="A defining event tied to being a ${char.role || 'edgerunner'}..." style="min-height:48px;font-size:12px" oninput="char.lp_roleSpecific=this.value">${char.lp_roleSpecific || ''}</textarea>
+      </div>
+    </div>`;
+}
+
+function seedLifepathRel(key) {
+  const f = LP_REL_FIELDS.find(x => x.key === key);
+  if (!f) return;
+  char[key] = f.seeds[Math.floor(Math.random() * f.seeds.length)];
+  const el = document.getElementById('wlp-' + key);
+  if (el) el.value = char[key];
+}
+
+function seedLifepathRole() {
+  const seeds = LP_ROLE_SEEDS[char.role] || [];
+  if (!seeds.length) return;
+  char.lp_roleSpecific = seeds[Math.floor(Math.random() * seeds.length)];
+  const el = document.getElementById('wlp-lp_roleSpecific');
+  if (el) el.value = char.lp_roleSpecific;
 }
 
 // ── Starting Gear ──────────────────────────────────────────────────
@@ -1102,10 +1187,30 @@ function collectAllFormData() {
     if (el) char[key] = el.type === 'number' ? parseInt(el.value)||0 : el.value;
   });
   collectLifepathData();
-  CPRED_DATA.stats.forEach(s => {
-    const el = document.getElementById('stat-' + s);
-    if (el) char.stats[s] = parseInt(el.value) || 5;
-  });
+  // Only pull stats from the wizard's creation inputs while the creation
+  // wizard is actually the active view. Otherwise the stale wizard inputs
+  // (default 5s) would clobber edits made on the Full Sheet.
+  if (activeSection === 'creation') {
+    if (!char.stats) char.stats = {};
+    CPRED_DATA.stats.forEach(s => {
+      const el = document.getElementById('stat-' + s);
+      if (el) char.stats[s] = parseInt(el.value) || 5;
+    });
+  }
+}
+
+// Backfill any fields a loaded/imported/older character is missing so the
+// sheet renders and edits persist (protects against undefined stats etc.)
+function normalizeChar(c) {
+  const b = newBlankChar();
+  Object.keys(b).forEach(k => { if (c[k] === undefined || c[k] === null) c[k] = b[k]; });
+  if (typeof c.stats !== 'object' || Array.isArray(c.stats)) c.stats = { ...b.stats };
+  CPRED_DATA.stats.forEach(s => { if (typeof c.stats[s] !== 'number') c.stats[s] = c.stats[s] ? parseInt(c.stats[s]) || 5 : 5; });
+  if (typeof c.skills !== 'object' || Array.isArray(c.skills)) c.skills = {};
+  if (typeof c.lifepath !== 'object' || Array.isArray(c.lifepath)) c.lifepath = {};
+  ['weapons', 'cyberware', 'gear', 'vehicles', 'netPrograms'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
+  if (typeof c.armor !== 'object' || Array.isArray(c.armor)) c.armor = { ...b.armor };
+  return c;
 }
 
 function saveToLocalStorage() {
@@ -1133,7 +1238,7 @@ async function saveCharacter() {
 async function loadCharacter() {
   const result = await callIPC('load-character');
   if (result.success && result.character) {
-    char = result.character;
+    char = normalizeChar(result.character);
     populateAllForms();
     notify('Loaded: ' + char.name, 'success');
   } else if (result.error) {
@@ -1151,10 +1256,14 @@ function populateAllForms() {
     if (el) el.value = char[key] || '';
   });
   updateSidebarIdentity();
+  updateStatInputValues();     // keep the wizard's stat inputs in sync with the loaded char
   if (char.portrait) {
     document.getElementById('portrait-img').src = char.portrait;
     document.getElementById('portrait-img').style.display = 'block';
     document.getElementById('portrait-placeholder').style.display = 'none';
+  } else {
+    document.getElementById('portrait-img').style.display = 'none';
+    document.getElementById('portrait-placeholder').style.display = 'flex';
   }
   syncTrackerFromChar();
 }
@@ -1239,6 +1348,18 @@ function newCharacter() {
   goWizardStep(0);
   switchSection('creation', document.querySelector('[data-section=creation]'));
   notify('New character started', 'success');
+}
+
+// Create a fresh character and edit it entirely on the Full Sheet (no wizard)
+function newBlankOnSheet() {
+  char = newBlankChar();
+  char.name = ''; char.handle = '';
+  populateAllForms();
+  const snavSheet = [...document.querySelectorAll('.snav-item')].find(n => (n.getAttribute('onclick') || '').includes("'sheet'"));
+  switchSection('sheet', snavSheet);
+  updateSidebarIdentity();
+  saveToLocalStorage();
+  notify('Blank character — edit any field on the sheet', 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1563,7 +1684,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const stored = localStorage.getItem('cpred_chars');
   if (stored) {
     const chars = JSON.parse(stored);
-    if (chars.length) { char = chars[chars.length - 1]; populateAllForms(); }
+    if (chars.length) { char = normalizeChar(chars[chars.length - 1]); populateAllForms(); }
   }
 });
 
@@ -2924,24 +3045,79 @@ function renderInstalledCW() {
   const el = document.getElementById('cw-installed-list');
   if (!char.cyberware.length) { el.innerHTML = '<div style="color:var(--dim);font-size:11px;font-family:Share Tech Mono,monospace;padding:8px">No cyberware installed</div>'; }
   else {
-    el.innerHTML = char.cyberware.map((c, i) => `
+    el.innerHTML = char.cyberware.map((c, i) => {
+      const slot = cyberSlotOf(c);
+      const paired = CW_PAIRED[slot];
+      const locPicker = paired ? `
+        <select onchange="setCWLoc(${i}, this.value)" style="font-size:9px;padding:2px 4px;margin-top:2px;width:auto" title="Which side of the body?">
+          <option value="" ${!c.bodyLoc?'selected':''}>Auto side</option>
+          <option value="R" ${c.bodyLoc==='R'?'selected':''}>Right</option>
+          <option value="L" ${c.bodyLoc==='L'?'selected':''}>Left</option>
+        </select>` : '';
+      return `
       <div class="gear-list-item" data-upg-host="cyberware:${i}" style="flex-direction:column;align-items:flex-start;gap:4px">
         <div style="display:flex;justify-content:space-between;width:100%;align-items:center">
           <div>
             <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon)">${c.name}${c.custom?' <span class="badge badge-gold">custom</span>':''}</div>
-            <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl||'—'} | ${c.install||'—'}</div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl||'—'} | ${c.install||'—'}${slot?' | maps to '+CW_SLOT_LABEL[slot]:''}</div>
+            ${locPicker}
           </div>
           <button class="btn btn-xs btn-red" onclick="removeCW(${i})">✕</button>
         </div>
         ${upgradeRowsHTML(c)}
         ${upgradePanelHTML('cyberware', i)}
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
   let tHL = 0;
   char.cyberware.forEach(c => { const m = String(c.hl||'').match(/\d+/); if (m) tHL += parseInt(m[0]); });
   document.getElementById('total-hl').textContent = tHL;
   const maxHum = (char.stats.EMP || 5) * 10;
   document.getElementById('current-humanity').textContent = Math.max(0, maxHum - tHL);
+  renderBodyMap();
+}
+
+// ── Cyberware → body location mapping ──────────────────────────────
+const CW_PAIRED = { eye: ['bm-reye', 'bm-leye'], arm: ['bm-rarm', 'bm-larm'], leg: ['bm-rleg', 'bm-lleg'] };
+const CW_SLOT_LABEL = { neural: 'Neural Link', audio: 'Cyberaudio', eye: 'Cybereye', arm: 'Cyberarm', leg: 'Cyberleg' };
+
+// Which body location an installed piece of chrome maps to (by name)
+function cyberSlotOf(item) {
+  const n = (item && item.name || '').toLowerCase();
+  if (/neural|sandevistan|kerenzikov|reflex co|nervous|synaptic|neuralware/.test(n)) return 'neural';
+  if (/cyberaudio|audio suite|amplified hearing|radio comm|ear|hearing/.test(n)) return 'audio';
+  if (/cybereye|smartlens|optic|targeting scope|eye/.test(n)) return 'eye';
+  if (/cyberarm|arm/.test(n)) return 'arm';
+  if (/cyberleg|leg/.test(n)) return 'leg';
+  return null;
+}
+
+function setCWLoc(i, val) {
+  if (!char.cyberware[i]) return;
+  if (val) char.cyberware[i].bodyLoc = val; else delete char.cyberware[i].bodyLoc;
+  saveToLocalStorage();
+  renderInstalledCW();
+}
+
+function renderBodyMap() {
+  const buckets = { 'bm-neural': [], 'bm-audio': [], 'bm-reye': [], 'bm-leye': [], 'bm-rarm': [], 'bm-larm': [], 'bm-rleg': [], 'bm-lleg': [] };
+  const autoFill = { eye: 0, arm: 0, leg: 0 };
+  (char.cyberware || []).forEach(item => {
+    const slot = cyberSlotOf(item);
+    if (!slot) return;
+    if (slot === 'neural') { buckets['bm-neural'].push(item.name); return; }
+    if (slot === 'audio') { buckets['bm-audio'].push(item.name); return; }
+    const pair = CW_PAIRED[slot];
+    let target;
+    if (item.bodyLoc === 'R') target = pair[0];
+    else if (item.bodyLoc === 'L') target = pair[1];
+    else { target = pair[autoFill[slot] % 2]; autoFill[slot]++; } // auto: right then left
+    buckets[target].push(item.name);
+  });
+  Object.entries(buckets).forEach(([id, arr]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = arr.length ? arr.join(', ') : '—';
+  });
 }
 
 function renderOwnedVehicles() {
@@ -3279,7 +3455,8 @@ async function sessOpenSheet(id) {
   const all = await folderChars();
   const c = all.find(x => String(x.id) === String(id));
   if (!c) { notify('Character not found', 'error'); return; }
-  char = c;
+  char = normalizeChar(c);
+  populateAllForms();
   const navChars = [...document.querySelectorAll('.topnav-item')].find(n => (n.getAttribute('onclick') || '').includes("'characters'"));
   if (navChars) switchTopPanel('characters', navChars);
   const snavSheet = [...document.querySelectorAll('.snav-item')].find(n => (n.getAttribute('onclick') || '').includes("'sheet'"));
