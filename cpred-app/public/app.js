@@ -3323,6 +3323,21 @@ async function folderChars() {
 
 async function renderSessionTracker() {
   const all = await folderChars();
+  const { unique, dups } = dedupeList(all);
+  // If a session character was itself a collapsed duplicate, move its session
+  // membership onto the kept copy so its card/controls still appear.
+  const keptIdByKey = {};
+  unique.forEach(c => { keptIdByKey[dedupeKey(c)] = c.id; });
+  let remapped = false;
+  sessionCharIds = sessionCharIds.map(id => {
+    const src = all.find(x => String(x.id) === String(id));
+    if (!src) return id;
+    const kept = keptIdByKey[dedupeKey(src)];
+    if (kept !== undefined && String(kept) !== String(id)) { remapped = true; return kept; }
+    return id;
+  });
+  if (remapped) { sessionCharIds = [...new Set(sessionCharIds.map(String))]; localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds)); }
+  const inSessionSet = new Set(sessionCharIds.map(String));
   const picker = document.getElementById('session-char-picker');
   picker.innerHTML = `
     <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -3331,21 +3346,22 @@ async function renderSessionTracker() {
       <button class="btn btn-ghost btn-sm" onclick="renderSessionTracker()">↻ Refresh</button>
       <button class="btn btn-outline btn-sm" onclick="sessRollInitAll()">🎲 Roll Initiative (All)</button>
       <button class="btn btn-ghost btn-sm" onclick="sessClearInitAll()">Clear Initiative</button>
+      ${dups.length ? `<button class="btn btn-gold btn-sm" onclick="sessDedupe()" title="Remove duplicate characters/NPCs, keeping the newest of each">🧹 Dedupe (${dups.length})</button>` : ''}
       ${customFolderPath ? `<span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);align-self:center">Custom: ${customFolderPath}</span>` : ''}
-    </div>` +
-    (all.length ? all.map(c => {
-      const inSession = sessionCharIds.includes(c.id);
+    </div>
+    <div style="width:100%;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-bottom:6px">✓ = in session · ✕ = remove from session · 🗑 = delete from pool (click twice)</div>` +
+    (unique.length ? unique.map(c => {
+      const inSession = inSessionSet.has(String(c.id));
       const tag = c.isNPC || c._kind === 'npcs' ? '<span class="badge badge-red" style="margin-left:4px">NPC</span>' : '<span class="badge badge-neon" style="margin-left:4px">PC</span>';
-      if (!inSession) return `<button class="btn btn-ghost btn-sm" onclick="toggleSessionChar('${c.id}')">+ ${c.name || 'Unnamed'}${tag}</button>`;
-      // In-session: name chip + a red ✕ to remove it from the session
-      return `<span style="display:inline-flex;align-items:stretch;margin:0 4px 4px 0">
-        <button class="btn btn-primary btn-sm" style="border-top-right-radius:0;border-bottom-right-radius:0" onclick="toggleSessionChar('${c.id}')">✓ ${c.name || 'Unnamed'}${tag}</button>
-        <button class="btn btn-sm" style="background:rgba(255,23,68,0.15);color:var(--red);border:1px solid rgba(255,23,68,0.4);border-left:none;border-top-left-radius:0;border-bottom-left-radius:0;padding:0 8px" title="Remove from session" onclick="removeFromSession('${c.id}')">✕</button>
-      </span>`;
+      const armed = sessDeleteArmed === c.id;
+      const trash = `<button class="btn btn-sm" style="background:${armed ? 'var(--red)' : 'rgba(255,23,68,0.1)'};color:${armed ? '#fff' : 'var(--red)'};border:1px solid rgba(255,23,68,0.4);border-left:none;border-top-left-radius:0;border-bottom-left-radius:0;padding:0 8px" title="Delete from pool (click twice to confirm)" onclick="sessArmDelete('${c.id}')">${armed ? 'Delete?' : '🗑'}</button>`;
+      const nameBtn = `<button class="btn ${inSession ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-top-right-radius:0;border-bottom-right-radius:0" onclick="toggleSessionChar('${c.id}')">${inSession ? '✓ ' : '+ '}${c.name || 'Unnamed'}${tag}</button>`;
+      const removeBtn = inSession ? `<button class="btn btn-sm" style="background:rgba(255,23,68,0.15);color:var(--red);border:1px solid rgba(255,23,68,0.4);border-left:none;border-radius:0;padding:0 8px" title="Remove from session" onclick="removeFromSession('${c.id}')">✕</button>` : '';
+      return `<span style="display:inline-flex;align-items:stretch;margin:0 4px 4px 0">${nameBtn}${removeBtn}${trash}</span>`;
     }).join('') : '<div style="font-family:Share Tech Mono,monospace;font-size:11px;color:var(--dim)">No characters found — create PCs in Characters, NPCs in NPC Generator</div>');
 
   const grid = document.getElementById('session-tracker-grid');
-  const inSession = all.filter(c => sessionCharIds.includes(c.id))
+  const inSession = unique.filter(c => inSessionSet.has(String(c.id)))
     .sort((a, b) => (b.initiative ?? -Infinity) - (a.initiative ?? -Infinity));
   grid.innerHTML = inSession.map((c, i) => sessionCard(c, i + 1)).join('');
 
@@ -3448,6 +3464,72 @@ async function sessSaveToFolder(id) {
 function removeFromSession(id) {
   sessionCharIds = sessionCharIds.filter(x => String(x) !== String(id));
   localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds));
+  renderSessionTracker();
+}
+
+// Dedupe key: same kind + name + role is treated as the same character
+function dedupeKey(c) {
+  return `${c._kind || 'pcs'}|${(c.name || '').trim().toLowerCase()}|${c.role || ''}`;
+}
+
+// Collapse duplicates, keeping the most-recently-updated copy of each
+function dedupeList(list) {
+  const seen = new Map();
+  const dups = [];
+  list.forEach(c => {
+    const k = dedupeKey(c);
+    const prev = seen.get(k);
+    if (!prev) { seen.set(k, c); return; }
+    const t = c.updatedAt || c.savedAt || 0, tp = prev.updatedAt || prev.savedAt || 0;
+    if (t > tp) { dups.push(prev); seen.set(k, c); } else { dups.push(c); }
+  });
+  return { unique: [...seen.values()], dups };
+}
+
+// Delete one character/NPC from wherever it lives (folder store, custom
+// folder list, or localStorage) and drop it from the active session.
+async function deleteCharFromPool(c) {
+  if (!c) return;
+  sessionCharIds = sessionCharIds.filter(x => String(x) !== String(c.id));
+  localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds));
+  if (ipc && (c._kind === 'pcs' || c._kind === 'npcs') && c._file) {
+    await callIPC('store-delete', c._kind, c._file);
+  } else if (c._kind === 'custom') {
+    customFolderChars = customFolderChars.filter(x => String(x.id) !== String(c.id));
+  } else {
+    refreshSavedChars();
+    savedChars = savedChars.filter(x => String(x.id) !== String(c.id));
+    localStorage.setItem('cpred_chars', JSON.stringify(savedChars));
+  }
+}
+
+// Two-click confirm (Electron blocks window.confirm in some builds): first
+// click arms the button, second click within 3s performs the delete.
+let sessDeleteArmed = null;
+function sessArmDelete(id) {
+  if (sessDeleteArmed === id) { sessDeleteArmed = null; sessDeleteChar(id); return; }
+  sessDeleteArmed = id;
+  renderSessionTracker();
+  setTimeout(() => { if (sessDeleteArmed === id) { sessDeleteArmed = null; renderSessionTracker(); } }, 3000);
+}
+
+// Remove a single character/NPC from the pool
+async function sessDeleteChar(id) {
+  const all = await folderChars();
+  const c = all.find(x => String(x.id) === String(id));
+  if (!c) return;
+  await deleteCharFromPool(c);
+  notify(`Removed "${c.name || 'Unnamed'}" from the pool`, 'success');
+  renderSessionTracker();
+}
+
+// Remove every duplicate from the pool, keeping the newest of each
+async function sessDedupe() {
+  const all = await folderChars();
+  const { dups } = dedupeList(all);
+  if (!dups.length) { notify('No duplicates found', 'success'); return; }
+  for (const c of dups) await deleteCharFromPool(c);
+  notify(`Removed ${dups.length} duplicate${dups.length > 1 ? 's' : ''} from the pool`, 'success');
   renderSessionTracker();
 }
 
