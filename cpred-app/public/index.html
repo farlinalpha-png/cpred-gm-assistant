@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="data.js"></script>
+<script src="mapdata.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+  }
+}
+</script>
 <style>
 :root {
   --neon:#00e5ff; --red:#ff1744; --gold:#ffd600; --green:#69f0ae;
@@ -217,6 +226,7 @@ input[type=number]{text-align:center}
     <div class="topnav-item active" data-panel="characters" onclick="switchTopPanel('characters',this)">Characters</div>
     <div class="topnav-item" data-panel="npcs" onclick="switchTopPanel('npcs',this)">NPC Generator</div>
     <div class="topnav-item" data-panel="encounters" onclick="switchTopPanel('encounters',this)">Encounters</div>
+    <div class="topnav-item" data-panel="maps3d" onclick="switchTopPanel('maps3d',this)">3D Maps</div>
     <div class="topnav-item" data-panel="ref" onclick="switchTopPanel('ref',this)">Quick Ref</div>
   </div>
   <div id="host-status" style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-left:8px"></div>
@@ -912,9 +922,25 @@ input[type=number]{text-align:center}
   </div>
 </div>
 
+<!-- ══ TOP PANEL: 3D MAPS ══ -->
+<div class="panel" id="panel-maps3d">
+  <div class="panel-header">
+    <div><div class="panel-title">3D Maps</div><div class="panel-sub">// night city atlas &amp; encounter builder</div></div>
+    <div class="actions-row" style="margin-top:0" id="map3d-actions"></div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" id="map3d-tab-city" onclick="map3dSwitch('city')">Night City Map</button>
+    <button class="tab" id="map3d-tab-enc" onclick="map3dSwitch('encounter')">Encounter Builder</button>
+  </div>
+  <div id="map3d-root" style="position:relative;width:100%;height:calc(100vh - 210px);min-height:460px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--dark)">
+    <div id="map3d-boot" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--dim)">// initialising render stage...</div>
+  </div>
+</div>
+
 </div><!-- /main -->
 </div><!-- /app -->
 
 <script src="app.js"></script>
+<script type="module" src="map3d/index.js"></script>
 </body>
 </html>

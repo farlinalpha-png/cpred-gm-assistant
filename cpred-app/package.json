@@ -48,8 +48,18 @@
     },
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["universal"] },
-        { "target": "zip", "arch": ["universal"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
       ],
       "icon": "assets/icon-512.png",
       "category": "public.app-category.utilities",
@@ -80,6 +90,7 @@
   "author": "Night City Systems",
   "license": "MIT",
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "three": "^0.185.1"
   }
 }
