@@ -54,6 +54,29 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+// Load the presentation/cast controller into the GM window. Done from here so
+// index.html stays untouched; the module wires its own button into the 3D Maps
+// panel and no-ops if it is ever loaded twice.
+app.on('browser-window-created', (e, win) => {
+  win.webContents.on('did-finish-load', () => {
+    try {
+      if (!/index\.html($|[?#])/i.test(win.webContents.getURL() || '')) return;
+      // Absolute URL from the document itself, plus a <script type=module>
+      // fallback, so the loader does not depend on import() base-URL subtleties.
+      win.webContents.executeJavaScript(`(() => {
+        const u = new URL('map3d/cast.js', location.href).href;
+        import(u).catch(err => {
+          console.error('[cast] dynamic import failed, falling back to a script tag', err);
+          const s = document.createElement('script');
+          s.type = 'module'; s.src = u;
+          s.onerror = e => console.error('[cast] could not load', u, e);
+          document.body.appendChild(s);
+        });
+      })();`).catch(() => {});
+    } catch (err) { /* never let this break window startup */ }
+  });
+});
+
 // ── Auto-update (checks the GitHub Releases feed configured in package.json "build.publish") ──
 function initAutoUpdater() {
   if (!app.isPackaged) return; // no update feed in dev — avoids noisy errors while running `npm start`
@@ -198,6 +221,135 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// ── PRESENTATION / CAST (additive) ───────────────────────────────────
+// The GM pushes a small state object; TVs/tablets on the LAN open
+// /display.html and follow it over SSE (with a plain-poll fallback).
+const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+
+const PRESENT_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+  '.wasm': 'application/wasm', '.glb': 'model/gltf-binary', '.hdr': 'application/octet-stream'
+};
+
+// Only these paths are exposed to the LAN — the GM app itself stays private.
+const PRESENT_FILES = new Set(['/display.html', '/mapdata.js']);
+const PRESENT_DIRS = ['/map3d/', '/vendor/'];
+
+function servePresentStatic(res, rawUrl) {
+  let rel;
+  try { rel = decodeURIComponent(rawUrl); } catch (e) { return false; }
+  if (rel.indexOf('\0') !== -1) return false;
+  // Resolve first, THEN check the whitelist: "/map3d/../app.js" must not pass
+  // as a /map3d/ path and then quietly hand out the GM app.
+  const target = path.resolve(PUBLIC_DIR, '.' + rel);
+  if (!target.startsWith(PUBLIC_DIR + path.sep)) return false;
+  const norm = '/' + path.relative(PUBLIC_DIR, target).split(path.sep).join('/');
+  if (!PRESENT_FILES.has(norm) && !PRESENT_DIRS.some(d => norm.startsWith(d))) return false;
+  try { if (!fs.statSync(target).isFile()) return false; } catch (e) { return false; }
+  res.writeHead(200, {
+    'Content-Type': PRESENT_MIME[path.extname(target).toLowerCase()] || 'application/octet-stream',
+    'Cache-Control': 'no-cache',
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.end(fs.readFileSync(target));
+  return true;
+}
+
+function blankPresentState() {
+  return {
+    seq: 0, ts: Date.now(), live: false,
+    show: 'standby',            // standby | city | encounter
+    theme: 'street',
+    title: 'NIGHT CITY', subtitle: '', caption: '',
+    district: null, location: null,
+    camera: null,               // { p:[x,y,z], t:[x,y,z] }
+    camLock: true,
+    spotlight: { on: false, x: 0, z: 0, label: '' },
+    tokens: [], notes: [],
+    reload: 0,                  // bumped by the GM to remote-refresh every display
+    presenter: true             // GM-only info stripped before it leaves the app
+  };
+}
+
+let presentState = blankPresentState();
+const presentClients = new Set();
+
+function presentPush() {
+  const payload = 'data: ' + JSON.stringify(presentState) + '\n\n';
+  for (const c of Array.from(presentClients)) {
+    try { c.write(payload); } catch (e) { presentClients.delete(c); }
+  }
+}
+
+function presentSet(patch) {
+  if (patch && patch.reset) presentState = blankPresentState();
+  else presentState = Object.assign({}, presentState, patch || {});
+  presentState.seq = (presentState.seq || 0) + 1;
+  presentState.ts = Date.now();
+  presentPush();
+  return presentState;
+}
+
+// Keep-alive so idle Wi-Fi links and the display's watchdog both stay happy.
+// A named event (not a comment) so the display's watchdog can actually see it.
+const presentHeartbeat = setInterval(() => {
+  for (const c of Array.from(presentClients)) {
+    try { c.write('event: hb\ndata: ' + Date.now() + '\n\n'); } catch (e) { presentClients.delete(c); }
+  }
+}, 5000);
+if (presentHeartbeat.unref) presentHeartbeat.unref();
+
+function lanAddresses() {
+  const nets = require('os').networkInterfaces();
+  const ips = [];
+  Object.values(nets).flat().forEach(n => { if (n && n.family === 'IPv4' && !n.internal) ips.push(n.address); });
+  return ips;
+}
+
+// Returns true when it has handled the request.
+function handlePresentRoutes(req, res, url) {
+  if (req.method === 'GET' && url === '/api/present') {
+    return json(res, 200, presentState), true;
+  }
+  if (req.method === 'GET' && url === '/api/present/stream') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.write('retry: 2000\n\n');
+    res.write('data: ' + JSON.stringify(presentState) + '\n\n');
+    presentClients.add(res);
+    const drop = () => { presentClients.delete(res); clearTimeout(recycle); };
+    // Bounded lifetime: the display's EventSource reconnects on its own, and a
+    // recycled stream means a stopped/restarted server never leaves sockets behind.
+    const recycle = setTimeout(() => { presentClients.delete(res); try { res.end(); } catch (e) {} }, 55000);
+    if (recycle.unref) recycle.unref();
+    req.on('close', drop); req.on('error', drop); res.on('error', drop);
+    return true;
+  }
+  if (req.method === 'POST' && url === '/api/present') {
+    let body = '';
+    req.on('data', d => { body += d; if (body.length > 1e6) req.destroy(); });
+    req.on('end', () => {
+      try { json(res, 200, presentSet(JSON.parse(body || '{}'))); }
+      catch (e) { json(res, 400, { error: e.message }); }
+    });
+    return true;
+  }
+  if (req.method === 'GET' && servePresentStatic(res, url)) return true;
+  return false;
+}
+
 function startServer(port) {
   return new Promise((resolve, reject) => {
     ensureDirs();
@@ -269,6 +421,10 @@ function startServer(port) {
         });
         return;
       }
+
+      // Presentation / cast view (display.html + its modules + state feed)
+      if (handlePresentRoutes(req, res, url)) return;
+
       json(res, 404, { error: 'unknown endpoint' });
     });
     server.on('error', reject);
@@ -294,3 +450,40 @@ ipcMain.handle('server-stop', () => {
 });
 
 ipcMain.handle('server-status', () => ({ running: !!server, port: serverPort }));
+
+// ── IPC: presentation / cast (additive) ──────────────────────────────
+ipcMain.handle('present-info', () => {
+  const ips = lanAddresses();
+  const host = ips[0] || 'localhost';
+  return {
+    running: !!server, port: serverPort, ips,
+    url: `http://${host}:${serverPort}/display.html`,
+    urls: ips.map(ip => `http://${ip}:${serverPort}/display.html`),
+    viewers: presentClients.size,
+    seq: presentState.seq, live: !!presentState.live
+  };
+});
+
+ipcMain.handle('present-set', (e, patch) => {
+  const s = presentSet(patch);
+  return { success: true, seq: s.seq, viewers: presentClients.size };
+});
+
+ipcMain.handle('present-get', () => presentState);
+
+// Ends every open display stream. Called before the HTTP server is restarted so
+// no keep-alive socket outlives it; displays reconnect by themselves.
+ipcMain.handle('present-detach', () => {
+  const n = presentClients.size;
+  for (const c of Array.from(presentClients)) { try { c.end(); } catch (err) {} }
+  presentClients.clear();
+  return { success: true, closed: n };
+});
+
+ipcMain.handle('open-external', async (e, url) => {
+  try {
+    if (!/^https?:\/\//i.test(String(url || ''))) return { success: false, error: 'only http(s) urls' };
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});

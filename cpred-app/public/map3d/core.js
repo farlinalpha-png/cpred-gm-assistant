@@ -69,15 +69,23 @@ export function createStage(container, opts = {}) {
   if (opts.target) controls.target.set(...opts.target);
 
   // Lighting rig: cool key, warm neon fill, subtle ambient so nothing is pure black
-  scene.add(new THREE.AmbientLight(0xffffff, 0.28));
+  scene.add(new THREE.AmbientLight(0xffffff, opts.ambient ?? 0.28));
   const key = new THREE.DirectionalLight(theme.key, 1.15);
-  key.position.set(60, 110, 40);
+  // The shadow frustum must be centred on whatever the mode actually builds.
+  // The city sits around (58,50), not the origin, so default to the camera
+  // target and let a mode override the span.
+  const sc = opts.shadowCenter || opts.target || [0, 0, 0];
+  const sr = opts.shadowRadius ?? 120;
+  key.position.set(sc[0] + 60, sc[1] + 110, sc[2] + 40);
+  key.target.position.set(sc[0], sc[1], sc[2]);
+  scene.add(key.target);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.camera.near = 1; key.shadow.camera.far = 400;
-  key.shadow.camera.left = -120; key.shadow.camera.right = 120;
-  key.shadow.camera.top = 120; key.shadow.camera.bottom = -120;
+  key.shadow.camera.near = 1; key.shadow.camera.far = 400 + sr;
+  key.shadow.camera.left = -sr; key.shadow.camera.right = sr;
+  key.shadow.camera.top = sr; key.shadow.camera.bottom = -sr;
   key.shadow.bias = -0.0004;
+  key.shadow.camera.updateProjectionMatrix();
   scene.add(key);
   const fill = new THREE.DirectionalLight(theme.fill, 0.5);
   fill.position.set(-70, 40, -60);
