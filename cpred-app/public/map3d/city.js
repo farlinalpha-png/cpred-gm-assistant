@@ -24,17 +24,24 @@ const CITY_MID   = new THREE.Vector3(59.5, 0, 50);
 const DEFAULT_CAM = { pos: new THREE.Vector3(58, 78, 124), target: new THREE.Vector3(58, 2, 50) };
 
 const THEME = {
-  name: 'Night City', ground: 0x05060e,
-  fogNear: 95, fogFar: 360,
+  name: 'Night City', ground: 0x0d1428,
+  // The city plate is only ~80 units across but fog started at 95, so nothing
+  // was ever fogged and every district read equally sharp — the plate looked
+  // like a flat tabletop model rather than a city seen through night air.
+  fogNear: 52, fogFar: 235,
   key: 0x9fe4ff, fill: 0xff2d95, bloom: 0.78
 };
 
 const THREAT_LABEL = ['SECURE', 'LOW', 'MODERATE', 'HIGH', 'EXTREME'];
+// Four region tints, and these are now the *only* hues on the plate.
+// mapdata gives all 24 districts their own accent; driving the map from those
+// produced a rainbow that read as a colour-swatch chart, and it also silently
+// contradicted this legend, which has always been region-based.
 const REGIONS = {
-  'The Island': { tint: 0x00e5ff, short: 'ISLAND' },
-  'Northside':  { tint: 0xff2d95, short: 'NORTH'  },
-  'Mainland':   { tint: 0xb388ff, short: 'MAIN'   },
-  'Southside':  { tint: 0xff9100, short: 'SOUTH'  }
+  'The Island': { tint: 0x35d6ff, short: 'ISLAND' },
+  'Northside':  { tint: 0xff4d94, short: 'NORTH'  },
+  'Mainland':   { tint: 0x9d7bff, short: 'MAIN'   },
+  'Southside':  { tint: 0xff9a3d, short: 'SOUTH'  }
 };
 
 const TAU = Math.PI * 2;
@@ -54,21 +61,25 @@ function makeWindowTexture(seed, cols, rows) {
   g.fillStyle = '#000'; g.fillRect(0, 0, 128, 256);
   const rnd = seededRandom(seed);
   const cw = 128 / cols, ch = 256 / rows;
+  // Roughly a third of the windows lit, and the lit ones biased bright.
+  // At the old density (~66% lit, mostly mid-alpha) plus bloom, every tower
+  // became one solid pastel block: the close-up read 100% lit / 0% dark and
+  // the city had no night left in it.
   for (let y = 0; y < rows; y++) {
-    const floorLit = rnd();
+    const floorDark = rnd() < 0.22;      // whole unlit floors punch black bands
     for (let x = 0; x < cols; x++) {
-      const r = rnd();
-      if (r < 0.34 + (floorLit < 0.16 ? 0.45 : 0)) continue;
-      const a = 0.18 + rnd() * 0.82;
+      if (floorDark && rnd() < 0.82) continue;
+      if (rnd() < 0.66) continue;
+      const a = rnd() < 0.55 ? 0.25 + rnd() * 0.3 : 0.72 + rnd() * 0.28;
       g.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
-      g.fillRect(x * cw + cw * 0.2, y * ch + ch * 0.22, cw * 0.6, ch * 0.48);
+      g.fillRect(x * cw + cw * 0.24, y * ch + ch * 0.26, cw * 0.52, ch * 0.42);
     }
   }
-  // a couple of bright signage bands
-  for (let i = 0; i < 3; i++) {
+  // one bright signage band, not three
+  {
     const y = Math.floor(rnd() * rows) * ch;
-    g.fillStyle = `rgba(255,255,255,${(0.55 + rnd() * 0.45).toFixed(3)})`;
-    g.fillRect(0, y + ch * 0.3, 128, ch * 0.22);
+    g.fillStyle = `rgba(255,255,255,${(0.6 + rnd() * 0.4).toFixed(3)})`;
+    g.fillRect(0, y + ch * 0.32, 128, ch * 0.18);
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -151,6 +162,41 @@ function slabGeometry(w, d, h, r, bevel) {
   return g;
 }
 
+// ── Per-mount reflection probe ─────────────────────────────────────
+// core.environmentMap() memoises one PMREM *render target* for the page. A
+// render-target texture has no CPU-side image, so the second renderer created
+// after a mode switch cannot re-upload it and every metal in the scene loses
+// its reflections. Measured: chrome mean RGB 157 on the first stage, 63 on the
+// second. Each mount builds its own probe against its own renderer instead.
+function buildCityEnv(renderer) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  const sky = g.createLinearGradient(0, 0, 0, 128);
+  sky.addColorStop(0.00, '#060a1c');
+  sky.addColorStop(0.44, '#16243f');
+  sky.addColorStop(0.52, '#2a2036');
+  sky.addColorStop(1.00, '#05070f');
+  g.fillStyle = sky; g.fillRect(0, 0, 256, 128);
+  const hues = ['#35d6ff', '#ff4d94', '#9d7bff', '#ff9a3d', '#eaf6ff'];
+  for (let i = 0; i < 48; i++) {
+    const x = (i * 79.7) % 256, y = 54 + ((i * 37.3) % 60);
+    const r = 3 + ((i * 23.9) % 13);
+    const rg = g.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, hues[i % hues.length]);
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  const src = new THREE.CanvasTexture(c);
+  src.mapping = THREE.EquirectangularReflectionMapping;
+  src.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const rt = pmrem.fromEquirectangular(src);
+  pmrem.dispose(); src.dispose();
+  return rt;
+}
+
 // A merged, vertex-coloured batch: one draw call, per-district recolour.
 function makeBatch(entries, material) {
   const ranges = {};
@@ -196,14 +242,20 @@ export function mount(container, ctx) {
     theme: THEME, fov: 46,
     cameraPos: [DEFAULT_CAM.pos.x, DEFAULT_CAM.pos.y, DEFAULT_CAM.pos.z],
     target: [DEFAULT_CAM.target.x, DEFAULT_CAM.target.y, DEFAULT_CAM.target.z],
-    exposure: 1.08
+    exposure: 1.22
   });
   const { scene, camera, renderer, controls } = stage;
 
-  // Bloom tuned for neon rather than general glare
-  stage.bloom.strength = 0.98;
-  stage.bloom.radius = 0.85;
-  stage.bloom.threshold = 0.5;
+  let envRT = null;
+  try { envRT = buildCityEnv(renderer); scene.environment = envRT.texture; }
+  catch (e) { /* keep whatever core supplied */ }
+
+  // Bloom tuned for neon rather than general glare. Threshold was 0.5, which
+  // caught the whole facade of every tower once the emissive window map was
+  // applied — that is what turned the close-up view into pastel soup.
+  stage.bloom.strength = 0.82;
+  stage.bloom.radius = 0.78;
+  stage.bloom.threshold = 0.72;
 
   // Bloom at full resolution costs ~13ms on this scene. Half-res targets cut
   // that to ~3ms and the softer falloff actually reads better for neon.
@@ -260,24 +312,31 @@ export function mount(container, ctx) {
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
       uTime:  { value: 0 },
-      uTop:   { value: new THREE.Color(0x02030a) },
-      uHoriz: { value: new THREE.Color(0x0b1024) },
-      uGlowA: { value: new THREE.Color(0x00394d) },
-      uGlowB: { value: new THREE.Color(0x2a0a24) }
+      // Raised out of black. At 0x02030a/0x0b1024 there was effectively no sky:
+      // the plate hung in a void with no horizon and nothing for the skyline to
+      // silhouette against.
+      uTop:   { value: new THREE.Color(0x050818) },
+      uHoriz: { value: new THREE.Color(0x14203f) },
+      uGlowA: { value: new THREE.Color(0x1d6f8f) },
+      uGlowB: { value: new THREE.Color(0x5a1a44) },
+      uCityGlow: { value: new THREE.Color(0x2a4e78) }
     },
     vertexShader: `
       varying vec3 vDir;
       void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `
-      uniform float uTime; uniform vec3 uTop, uHoriz, uGlowA, uGlowB;
+      uniform float uTime; uniform vec3 uTop, uHoriz, uGlowA, uGlowB, uCityGlow;
       varying vec3 vDir;
       void main(){
         vec3 n = normalize(vDir);
         float h = n.y;
-        vec3 col = mix(uHoriz, uTop, smoothstep(-0.08, 0.62, h));
+        vec3 col = mix(uHoriz, uTop, smoothstep(-0.04, 0.55, h));
         float band = pow(max(0.0, 1.0 - abs(h) * 4.2), 3.0);
         float side = n.x * 0.5 + 0.5;
         col += mix(uGlowB, uGlowA, side) * band * (0.85 + 0.15 * sin(uTime * 0.35));
+        // light-pollution dome hugging the horizon — this is what gives a
+        // night skyline something to be a silhouette against
+        col += uCityGlow * pow(max(0.0, 1.0 - abs(h) * 7.5), 2.2) * 0.85;
         // faint vertical interference, keeps the dome from banding flat
         col += vec3(0.004, 0.008, 0.014) * sin(n.y * 90.0 + uTime * 0.6);
         gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -310,13 +369,21 @@ export function mount(container, ctx) {
   // ─────────────────────────────────────────────────────────────────
   // WATER — the void around The Island
   // ─────────────────────────────────────────────────────────────────
+  // uGlow is filled in once the per-district metadata exists (see below);
+  // mount() is synchronous up to that point, so it is set before frame 1.
   const waterUniforms = {
     uTime:   { value: 0 },
-    uDeep:   { value: new THREE.Color(0x01040c) },
-    uShore:  { value: new THREE.Color(0x04182b) },
+    // The water carries fog:false, so past the grid fade it used to reach pure
+    // black and roughly half the wide shot was dead pixels. Deep water should
+    // still read as water.
+    uDeep:   { value: new THREE.Color(0x070c1c) },
+    uShore:  { value: new THREE.Color(0x0a2440) },
     uNeon:   { value: new THREE.Color(0x00e5ff) },
     uMag:    { value: new THREE.Color(0xff2d95) },
-    uCenter: { value: new THREE.Vector2(CITY_MID.x, CITY_MID.z) }
+    uCenter: { value: new THREE.Vector2(CITY_MID.x, CITY_MID.z) },
+    uGlow:   { value: null },
+    uMin:    { value: new THREE.Vector2(CITY_MIN.x, CITY_MIN.y) },
+    uSpan:   { value: new THREE.Vector2(CITY_MAX.x - CITY_MIN.x, CITY_MAX.y - CITY_MIN.y) }
   };
   const waterMat = new THREE.ShaderMaterial({
     uniforms: waterUniforms, fog: false,
@@ -326,13 +393,27 @@ export function mount(container, ctx) {
         gl_Position = projectionMatrix * viewMatrix * wp; }`,
     fragmentShader: `
       uniform float uTime; uniform vec3 uDeep, uShore, uNeon, uMag; uniform vec2 uCenter;
+      uniform sampler2D uGlow; uniform vec2 uMin, uSpan;
       varying vec3 vW;
       float line(float c, float w){ return smoothstep(w, 0.0, abs(fract(c) - 0.5)); }
       void main(){
         float d = length(vW.xz - uCenter);
         float dn = d / 130.0;
         vec3 col = mix(uShore, uDeep, clamp(dn * 1.6, 0.0, 1.0));
-        float fade = smoothstep(1.05, 0.02, dn);
+        float fade = smoothstep(1.45, 0.02, dn);
+
+        // reflected city glow, smeared vertically and rippled
+        vec2 guv = (vW.xz - uMin) / uSpan;
+        float ripple = sin(vW.z * 1.7 + uTime * 0.9) * 0.010
+                     + sin(vW.x * 2.3 - uTime * 0.6) * 0.008;
+        vec3 refl = vec3(0.0);
+        for (int i = 0; i < 4; i++) {
+          float o = float(i) * 0.018;
+          vec2 uv = guv + vec2(ripple, o + ripple * 0.5);
+          if (uv.x > -0.02 && uv.x < 1.02 && uv.y > -0.02 && uv.y < 1.02)
+            refl += texture2D(uGlow, clamp(uv, 0.0, 1.0)).rgb;
+        }
+        col += refl * 0.115 * fade;
         // holo grid
         float g = max(line(vW.x / 6.0, 0.045), line(vW.z / 6.0, 0.045));
         col += uNeon * g * 0.055 * fade * (0.6 + 0.4 * sin(uTime * 0.8 - dn * 5.0));
@@ -394,9 +475,22 @@ export function mount(container, ctx) {
       if (l > 0.72) c.multiplyScalar(0.55 / l * 0.72 + 0.28);
       return c;
     };
+    // One hue per region, with a small per-district value/saturation shift by
+    // tier so neighbours are still separable. 24 saturated hues fighting each
+    // other was the single loudest thing wrong with this map.
+    const reg = REGIONS[d.region];
+    const base = new THREE.Color(reg ? reg.tint : 0x35d6ff);
+    const hsl = { h: 0, s: 0, l: 0 };
+    base.getHSL(hsl);
+    const jitter = (seededRandom('acc' + d.code)() - 0.5);
+    base.setHSL(
+      (hsl.h + jitter * 0.022 + 1) % 1,
+      clamp(hsl.s * (0.80 + d.tier * 0.055), 0, 1),
+      clamp(hsl.l * (0.74 + d.tier * 0.075) + jitter * 0.02, 0.05, 0.78)
+    );
     meta[d.code] = {
       maxH,
-      accent: tame(new THREE.Color(d.accent)),
+      accent: tame(base),
       threatColor: tame(new THREE.Color(THREAT_COLOR[d.threat] || 0xffffff))
     };
 
@@ -443,6 +537,37 @@ export function mount(container, ctx) {
     gp.translate(d.x, LAND_TOP + 0.09, d.z);
     glowEntries.push({ code: d.code, geo: gp });
   });
+
+  // A blurred top-down map of where the districts are and what colour they
+  // glow. Sampled by the water shader it fakes the city's reflection in the
+  // bay — without it the water was a bare grid on black and the city read as
+  // a model floating over nothing.
+  waterUniforms.uGlow.value = track((() => {
+    const S = 96;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, S, S);
+    g.globalCompositeOperation = 'lighter';
+    const spanX = CITY_MAX.x - CITY_MIN.x, spanZ = CITY_MAX.y - CITY_MIN.y;
+    DATA.forEach(d => {
+      const u = ((d.x - CITY_MIN.x) / spanX) * S;
+      const v = ((d.z - CITY_MIN.y) / spanZ) * S;
+      const r = Math.max(3, (Math.max(d.w, d.d) / spanX) * S * 1.5);
+      const col = meta[d.code].accent;
+      const hex = `${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)}`;
+      const rg = g.createRadialGradient(u, v, 0, u, v, r);
+      rg.addColorStop(0, `rgba(${hex},0.95)`);
+      rg.addColorStop(0.45, `rgba(${hex},0.34)`);
+      rg.addColorStop(1, `rgba(${hex},0)`);
+      g.fillStyle = rg;
+      g.fillRect(u - r, v - r, r * 2, r * 2);
+    });
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    return t;
+  })());
 
   const landMat = new THREE.MeshStandardMaterial({
     color: 0x0a0b15, roughness: 0.82, metalness: 0.32
@@ -533,8 +658,8 @@ export function mount(container, ctx) {
 
     const tex = winTex[Math.abs(d.code.charCodeAt(0)) % winTex.length];
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x090a12, roughness: 0.58, metalness: 0.52,
-      emissive: meta[d.code].accent.clone(), emissiveMap: tex, emissiveIntensity: 1.7
+      color: 0x0b0d17, roughness: 0.46, metalness: 0.62,
+      emissive: meta[d.code].accent.clone(), emissiveMap: tex, emissiveIntensity: 1.15
     });
     const mesh = new THREE.InstancedMesh(boxGeo, mat, items.length);
     mesh.castShadow = true; mesh.receiveShadow = true;
@@ -567,7 +692,9 @@ export function mount(container, ctx) {
   roofPts.forEach((p, i) => {
     P.set(p.x, p.y, p.z); S.set(1, 1, 1); M.compose(P, Q, S);
     roofMesh.setMatrixAt(i, M);
-    roofMesh.setColorAt(i, tmpCol.copy(meta[p.code].accent).multiplyScalar(1.5));
+    // ×1.5 pushed these past white and, at close range, 300-odd of them read
+    // as confetti scattered over the skyline rather than aircraft warning lights.
+    roofMesh.setColorAt(i, tmpCol.copy(meta[p.code].accent).multiplyScalar(0.85));
   });
   roofMesh.count = roofPts.length;
   roofMesh.instanceMatrix.needsUpdate = true;
@@ -813,13 +940,16 @@ export function mount(container, ctx) {
       const focus = selectedCode && !isSel && !isHover ? 0.5 : 1;
       const dim = (on ? 1 : 0.16) * focus;
 
-      rimBatch.set(d.code, c, boost * dim * 1.05);
-      crownBatch.set(d.code, c, boost * dim * (isSel || isHover ? 1.35 : 0.85));
+      // The rim is a boundary marker, not a light source: at ×1.05 the 24
+      // outlines were the loudest thing on the plate and every district read
+      // as a separate glowing tray rather than part of one city.
+      rimBatch.set(d.code, c, boost * dim * 0.62);
+      crownBatch.set(d.code, c, boost * dim * (isSel || isHover ? 1.15 : 0.58));
       glowBatch.set(d.code, c, dim * (isSel ? 1.3 : isHover ? 0.95 : 0.42));
 
       const mat = districtMat[d.code];
       mat.emissive.copy(c);
-      mat.emissiveIntensity = (isSel ? 3.4 : isHover ? 2.8 : 1.7) * (on ? 1 : 0.14) * focus;
+      mat.emissiveIntensity = (isSel ? 2.5 : isHover ? 2.0 : 1.15) * (on ? 1 : 0.14) * focus;
       const cl = on ? 0.035 : 0.012;
       mat.color.setRGB(cl * focus, cl * 1.08 * focus, cl * 1.55 * focus);
 
@@ -1403,6 +1533,8 @@ export function mount(container, ctx) {
     elThreat.removeEventListener('click', onThreat);
     elLabels.removeEventListener('click', onLabels);
     elReset.removeEventListener('click', onResetClick);
+    if (envRT) { try { envRT.dispose(); } catch (e) { } envRT = null; }
+    scene.environment = null;
     try { baseDispose(); } catch (e) { console.error('[city] stage dispose', e); }
     disposables.forEach(o => { try { o.dispose(); } catch (e) {} });
     pickGeo.dispose(); pickMat.dispose();

@@ -137,6 +137,8 @@ export function createStage(container, opts = {}) {
       running = false; ro.disconnect(); controls.dispose();
       scene.traverse(o => { o.geometry?.dispose?.();
         if (Array.isArray(o.material)) o.material.forEach(m => m.dispose()); else o.material?.dispose?.(); });
+      scene.environment = null;
+      disposeEnvironment(renderer);   // the probe belongs to this renderer only
       composer.dispose?.(); renderer.dispose();
       renderer.domElement.remove();
     }
@@ -147,9 +149,16 @@ export function createStage(container, opts = {}) {
 // Physical materials need something to reflect: without scene.environment
 // three shades metal/chrome pure black. One PMREM-filtered procedural
 // "night city" probe is built once and reused by every mode.
-let _envTex = null;
+// A PMREM result is a render-target texture: it lives in ONE renderer's GPU
+// context and has no CPU-side image to re-upload. Caching it globally meant
+// the next stage after a mode switch got a texture its renderer could not
+// resolve, and every metal silently lost its reflections. Cache per renderer.
+const _envByRenderer = new WeakMap();
 export function environmentMap(renderer) {
-  if (_envTex) return _envTex;
+  if (_envByRenderer.has(renderer)) return _envByRenderer.get(renderer);
+  // Seeded so every renderer builds an identical probe — otherwise the city
+  // and the encounter map would reflect different skies.
+  const rnd = seededRandom('nightcity-env');
   const c = document.createElement('canvas');
   c.width = 256; c.height = 128;
   const g = c.getContext('2d');
@@ -163,9 +172,9 @@ export function environmentMap(renderer) {
   // scattered neon emitters so chrome picks up coloured highlights
   const hues = ['#00e5ff', '#ff2d95', '#ffd600', '#7c4dff', '#69f0ae'];
   for (let i = 0; i < 44; i++) {
-    const x = Math.random() * 256, y = 58 + Math.random() * 54;
-    const r = 3 + Math.random() * 11;
-    const col = hues[(Math.random() * hues.length) | 0];
+    const x = rnd() * 256, y = 58 + rnd() * 54;
+    const r = 3 + rnd() * 11;
+    const col = hues[(rnd() * hues.length) | 0];
     const rg = g.createRadialGradient(x, y, 0, x, y, r);
     rg.addColorStop(0, col); rg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = rg; g.fillRect(x - r, y - r, r * 2, r * 2);
@@ -175,9 +184,16 @@ export function environmentMap(renderer) {
   tex.colorSpace = THREE.SRGBColorSpace;
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
-  _envTex = pmrem.fromEquirectangular(tex).texture;
+  const env = pmrem.fromEquirectangular(tex).texture;
   pmrem.dispose(); tex.dispose();
-  return _envTex;
+  _envByRenderer.set(renderer, env);
+  return env;
+}
+
+// Release the probe belonging to a renderer that is going away.
+export function disposeEnvironment(renderer) {
+  const t = _envByRenderer.get(renderer);
+  if (t) { t.dispose(); _envByRenderer.delete(renderer); }
 }
 
 // Emissive neon material helper — used for signage, edges and token rings

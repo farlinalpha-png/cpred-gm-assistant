@@ -32,11 +32,88 @@ const RANGE_BANDS = [
   [100, '51–100 m'], [200, '101–200 m'], [400, '201–400 m'], [800, '401–800 m']
 ];
 function rangeBand(d) {
-  for (const [max, label] of RANGE_BANDS) if (d <= max) return label;
+  // Band on the distance as *displayed* (1 d.p.). A raycast that lands at
+  // 12.0000001 m shows "12.0 m" but used to fall through to the 13–25 m band,
+  // which is a different DV at the table.
+  const v = Math.round(d * 10) / 10;
+  for (const [max, label] of RANGE_BANDS) if (v <= max) return label;
   return 'out of range';
 }
 
 const NEONS = [0x00e5ff, 0xff2d95, 0xffd600, 0x69f0ae, 0x7c4dff, 0xff9100, 0xff1744, 0x00ffd5];
+
+// ── Per-theme art direction ────────────────────────────────────────
+// core's THEMES carries the palette; everything that has to scale with the
+// map (fog, ground extent) or that we tuned by measuring the framebuffer
+// (exposure, bloom, ambient) lives here so the six themes stay distinct.
+//   fogN/fogF are multipliers on the map size M, so a HUGE map does not
+//   drown in haze and a SMALL one still gets atmospheric depth.
+//   key/keyCol/keyDir drive core's *shadow-casting* directional. Generators
+//   used to add their own THREE.DirectionalLight for mood, which lit the scene
+//   but cast nothing — the combat zone had literally zero shadows and read as
+//   flat brown paper. There is one key per theme and it is the one that casts.
+const TUNE = {
+  street:     { exposure: 1.00, bloom: 0.55, fogN: 0.30, fogF: 2.30, fog: 0x0a0d18, back: 0x0a0d18, amb: 0.30, ambCol: 0x4a6a9a, hemi: 0.34,
+                key: 0.85, keyCol: 0x9fd0ff, keyDir: [0.55, 1.25, -0.65] },
+  corpo:      { exposure: 0.92, bloom: 0.42, fogN: 0.34, fogF: 2.10, fog: 0x0d1119, back: 0x0d1119, amb: 0.42, ambCol: 0xa8c4dc, hemi: 0.40,
+                key: 1.45, keyCol: 0xeaf4ff, keyDir: [0.7, 1.5, 0.5] },
+  // Warm fog + a warm key gave a uniformly salmon ruin with no cool anchor.
+  // The fires have to be the only warm light in the frame.
+  combatzone: { exposure: 1.70, bloom: 0.62, fogN: 0.36, fogF: 2.40, fog: 0x161d28, back: 0x0b0e15, amb: 0.22, ambCol: 0x6f809e, hemi: 0.34,
+                key: 2.90, keyCol: 0xa8bee8, keyDir: [-0.85, 0.80, -0.55] },
+  industrial: { exposure: 1.30, bloom: 0.50, fogN: 0.30, fogF: 2.20, fog: 0x121722, back: 0x0b0e14, amb: 0.34, ambCol: 0x7e96b8, hemi: 0.46,
+                key: 1.60, keyCol: 0xa6c2e8, keyDir: [-0.7, 1.2, -0.6] },
+  netrun:     { exposure: 0.95, bloom: 1.05, fogN: 0.55, fogF: 3.40, fog: 0x03040c, back: 0x03040c, amb: 0.16, ambCol: 0x4a5aa8, hemi: 0.18,
+                key: 0.30, keyCol: 0x7fa0ff, keyDir: [0.4, 1.6, 0.4] },
+  badlands:   { exposure: 1.35, bloom: 0.34, fogN: 0.45, fogF: 2.80, fog: 0x1a1726, back: 0x141327, amb: 0.34, ambCol: 0x6e78b4, hemi: 0.48,
+                key: 1.75, keyCol: 0xa8bcf0, keyDir: [-0.9, 0.85, -0.5] }
+};
+
+// ── Per-mount environment probe ────────────────────────────────────
+// core.environmentMap() memoises one PMREM render target for the lifetime of
+// the page, but a render-target texture belongs to the renderer that produced
+// it. After a mode switch the second renderer cannot re-upload it (there is no
+// CPU-side image), so every metal in the scene loses its reflections —
+// measured as chrome mean RGB 157 on the first stage vs 63 on the second.
+// Each mount therefore builds its own probe against its own renderer.
+function buildEnvProbe(renderer, themeKey) {
+  const t = TUNE[themeKey] || TUNE.street;
+  const sky = new THREE.Color(t.ambCol).multiplyScalar(0.30);
+  const grd = new THREE.Color(t.fog);
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  const lg = g.createLinearGradient(0, 0, 0, 128);
+  lg.addColorStop(0.00, '#' + sky.clone().multiplyScalar(1.25).getHexString());
+  lg.addColorStop(0.48, '#' + sky.getHexString());
+  lg.addColorStop(0.54, '#' + grd.clone().multiplyScalar(1.5).getHexString());
+  lg.addColorStop(1.00, '#' + grd.clone().multiplyScalar(0.5).getHexString());
+  g.fillStyle = lg; g.fillRect(0, 0, 256, 128);
+  // A handful of emitters so chrome picks up coloured highlights rather than
+  // a flat grey. Netrun and badlands want a very different set from the street.
+  const hues = themeKey === 'netrun' ? ['#00ffd5', '#7c4dff', '#ff2d95']
+    : themeKey === 'badlands' ? ['#ff9100', '#ffd6a0', '#5a6ea8']
+      : themeKey === 'combatzone' ? ['#ff7a22', '#ff1744', '#8899cc']
+        : themeKey === 'corpo' ? ['#dff2ff', '#bfe6ff', '#8fb4d8']
+          : themeKey === 'industrial' ? ['#ffd600', '#ffe0a0', '#7f95b8']
+            : ['#00e5ff', '#ff2d95', '#ffd600', '#7c4dff'];
+  for (let i = 0; i < 40; i++) {
+    const x = (i * 97.13) % 256, y = 56 + ((i * 53.7) % 56);
+    const r = 4 + ((i * 31.1) % 12);
+    const rg = g.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, hues[i % hues.length]);
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  const src = new THREE.CanvasTexture(c);
+  src.mapping = THREE.EquirectangularReflectionMapping;
+  src.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const rt = pmrem.fromEquirectangular(src);
+  pmrem.dispose(); src.dispose();
+  return rt;              // caller owns .texture and .dispose()
+}
 
 const FALLBACK_PROPS = [
   'crate', 'barrel', 'dumpster', 'barricade', 'sandbags', 'jersey',
@@ -136,16 +213,30 @@ function raw(pool, color, mul = 1.6) {
 // ATMOSPHERE — the haze, glow decals and light shafts that sell the mood
 // ═══════════════════════════════════════════════════════════════════
 function softDisc(pool, key, inner, stops) {
-  return pool.tex(key, () => canvasTex(128, 128, (g, w, h) => {
+  return pool.tex(key, () => canvasTex(256, 256, (g, w, h) => {
     const gr = g.createRadialGradient(w / 2, h / 2, w * inner, w / 2, h / 2, w / 2);
     stops.forEach(([o, c]) => gr.addColorStop(o, c));
     g.fillStyle = gr; g.fillRect(0, 0, w, h);
   }));
 }
 
+// A gaussian-ish alpha ramp. The old two-stop gradient stayed near-opaque out
+// to half radius and then fell off fast, so the bloom threshold cut it into a
+// visible hard-edged ellipse — six of those were floating over the industrial
+// yard looking like stickers. This profile never presents a contour to bloom.
+const SOFT_STOPS = a => [
+  [0.00, `rgba(255,255,255,${a})`],
+  [0.18, `rgba(255,255,255,${a * 0.70})`],
+  [0.36, `rgba(255,255,255,${a * 0.40})`],
+  [0.54, `rgba(255,255,255,${a * 0.19})`],
+  [0.72, `rgba(255,255,255,${a * 0.072})`],
+  [0.87, `rgba(255,255,255,${a * 0.020})`],
+  [1.00, 'rgba(255,255,255,0)']
+];
+
 // Drifting haze cards. Cheap, additive, and the single biggest mood win.
 function addHaze(ctx, count, color, scale, yLo, yHi, opacity = 0.09) {
-  const tex = softDisc(ctx.pool, 'haze', 0.0, [[0, 'rgba(255,255,255,.85)'], [0.45, 'rgba(255,255,255,.22)'], [1, 'rgba(255,255,255,0)']]);
+  const tex = softDisc(ctx.pool, 'haze', 0.0, SOFT_STOPS(0.85));
   const mat = new THREE.SpriteMaterial({
     map: tex, color, transparent: true, opacity,
     blending: THREE.AdditiveBlending, depthWrite: false, fog: false
@@ -173,7 +264,7 @@ function addHaze(ctx, count, color, scale, yLo, yHi, opacity = 0.09) {
 
 // Glow decal on the floor — puddle sheen, light pool, scorch mark.
 function addGlowDecal(ctx, x, z, r, color, opacity = 0.3, y = 0.03) {
-  const tex = softDisc(ctx.pool, 'decal', 0.02, [[0, 'rgba(255,255,255,1)'], [0.5, 'rgba(255,255,255,.35)'], [1, 'rgba(255,255,255,0)']]);
+  const tex = softDisc(ctx.pool, 'decal', 0.0, SOFT_STOPS(1.0));
   const mat = ctx.pool.mat(`decal${color},${opacity}`, () => new THREE.MeshBasicMaterial({
     map: tex, color, transparent: true, opacity, blending: THREE.AdditiveBlending,
     depthWrite: false, toneMapped: false, fog: true
@@ -283,21 +374,27 @@ function graffitiTexture(pool, word, color) {
 // ═══════════════════════════════════════════════════════════════════
 // TACTICAL GRID — 2 m squares, 10 m majors
 // ═══════════════════════════════════════════════════════════════════
-function gridRect(x0, x1, z0, z1, y, minor, major, opacity) {
+// `sampleY` (optional) makes the grid follow terrain. Without it the badlands
+// drew a flat lattice at y=0.035 that sliced straight through every dune — the
+// one place the tactical overlay actively lied about the ground.
+function gridRect(x0, x1, z0, z1, y, minor, major, opacity, sampleY) {
   const pos = [], col = [];
   const cm = new THREE.Color(minor), cM = new THREE.Color(major);
   const a0 = Math.ceil(x0 / CELL) * CELL, a1 = Math.floor(x1 / CELL) * CELL;
   const b0 = Math.ceil(z0 / CELL) * CELL, b1 = Math.floor(z1 / CELL) * CELL;
-  for (let x = a0; x <= a1 + 1e-6; x += CELL) {
-    const c = (Math.round(x) % 10 === 0) ? cM : cm;
-    pos.push(x, 0, z0, x, 0, z1);
-    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
-  }
-  for (let z = b0; z <= b1 + 1e-6; z += CELL) {
-    const c = (Math.round(z) % 10 === 0) ? cM : cm;
-    pos.push(x0, 0, z, x1, 0, z);
-    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
-  }
+  const SEG = sampleY ? 10 : 1;   // subdivide so the line can hug the surface
+  const push = (ax, az, bx, bz, c) => {
+    for (let s = 0; s < SEG; s++) {
+      const t0 = s / SEG, t1 = (s + 1) / SEG;
+      const px0 = ax + (bx - ax) * t0, pz0 = az + (bz - az) * t0;
+      const px1 = ax + (bx - ax) * t1, pz1 = az + (bz - az) * t1;
+      pos.push(px0, sampleY ? sampleY(px0, pz0) : 0, pz0,
+        px1, sampleY ? sampleY(px1, pz1) : 0, pz1);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    }
+  };
+  for (let x = a0; x <= a1 + 1e-6; x += CELL) push(x, z0, x, z1, (Math.round(x) % 10 === 0) ? cM : cm);
+  for (let z = b0; z <= b1 + 1e-6; z += CELL) push(x0, z, x1, z, (Math.round(z) % 10 === 0) ? cM : cm);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -319,7 +416,7 @@ function makeCtx(pool, opts) {
     district: opts.district, accent: opts.accent, seed: opts.seed,
     platforms: [],      // {x,z,w,d,y} standable surfaces
     surfaces: [],       // raycast targets for token drops
-    anim: [], disposables: [], windows: [], brief: '', gridY: [],
+    anim: [], disposables: [], windows: [], brief: '', gridY: [], gridSampleY: null,
     r(a, b) { return a + rng() * (b - a); },
     ri(a, b) { return Math.floor(a + rng() * (b - a + 1)); },
     one(arr) { return arr[Math.min(arr.length - 1, Math.floor(rng() * arr.length))]; },
@@ -398,9 +495,13 @@ function batchStatics(ctx) {
 }
 
 function addGround(ctx, color, rough, metal, size) {
-  const M = size || ctx.M * 1.7;
+  // The ground has to outrun the fog, otherwise the player sees the map end in
+  // a hard square edge hanging in the void — the single most "unfinished" tell
+  // the six themes shared. TUNE.fogF tops out at 3.4×M, so 8×M is always past
+  // full fog saturation and the plate dissolves into the backdrop instead.
+  const M = size || ctx.M * 8;
   const g = new THREE.Mesh(
-    ctx.pool.geo('groundplane', () => new THREE.PlaneGeometry(1, 1, 1, 1)),
+    ctx.pool.geo('groundplane', () => new THREE.PlaneGeometry(1, 1, 24, 24)),
     new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal })
   );
   g.rotation.x = -Math.PI / 2; g.scale.set(M, M, 1); g.position.y = 0;
@@ -520,6 +621,46 @@ function texMat(pool, key, tex, mul, transparent) {
   }));
 }
 
+// A stretched additive smear on the road under a sign. Real wet-asphalt
+// reflection would need a second pass; this is the cheap trick every
+// neon-noir renderer uses and it is what actually fills the black road.
+function wetReflection(ctx, x, z, color, w, len, opacity) {
+  const tex = softDisc(ctx.pool, 'decal', 0.0, SOFT_STOPS(1.0));
+  const mat = ctx.pool.mat(`wet${color}`, () => new THREE.MeshBasicMaterial({
+    map: tex, color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
+    depthWrite: false, toneMapped: false, fog: true
+  }));
+  const m = new THREE.Mesh(ctx.pool.geo('plane1', () => new THREE.PlaneGeometry(1, 1)), mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.012, z);
+  m.scale.set(w, len, 1);
+  m.renderOrder = -3;
+  // opacity has to live on the mesh, not the pooled material
+  m.material = mat.clone(); m.material.opacity = opacity;
+  ctx.disposables.push(m.material);
+  ctx.group.add(m);
+  return m;
+}
+
+// Rooftop dressing — plant, vents, water tanks. Without it you look down at a
+// street map and every roof is a black rectangle.
+function rooftop(ctx, cx, cz, w, d, h) {
+  const P = ctx.pool;
+  const mtl = surf(P, 0x2e3340, 0.7, 0.45);
+  const n = ctx.ri(2, 4);
+  for (let i = 0; i < n; i++) {
+    const px = cx + ctx.r(-w / 2 + 1.2, w / 2 - 1.2);
+    const pz = cz + ctx.r(-d / 2 + 1.2, d / 2 - 1.2);
+    if (ctx.chance(0.45)) {
+      ctx.group.add(cyl(P, 1.0, 1.0, 1.5, 10, mtl, px, h + 0.75, pz));
+      ctx.group.add(cyl(P, 1.05, 1.05, 0.1, 10, surf(P, 0x1a1e28, 0.8, 0.3), px, h + 1.55, pz, false));
+    } else {
+      ctx.group.add(box(P, ctx.r(1.2, 2.4), ctx.r(0.6, 1.2), ctx.r(1.2, 2.2), mtl, px, h + 0.5, pz, ctx.r(0, 1.5)));
+    }
+  }
+  if (ctx.chance(0.5)) ctx.group.add(strip(ctx, 0.14, 0.14, 0.14, 0xff1744, cx, h + 1.9, cz, 0, 3.0));
+}
+
 // Vertical or horizontal lit sign hanging off a facade.
 function signBlade(ctx, x, y, z, ry, text, color, vertical) {
   const w = vertical ? 0.95 : 3.2, h = vertical ? 3.6 : 1.05;
@@ -581,7 +722,13 @@ function genStreet(ctx) {
   const roadHalf = H * 0.42, walkOuter = H * 0.60;
   const P = ctx.pool;
 
-  addGround(ctx, 0x0d0e16, 0.3, 0.62);            // wet asphalt
+  addGround(ctx, 0x0d0e16, 0.22, 0.78);           // wet asphalt — reflects the probe
+
+  // The canyon walls used to render as pure black voids: three point lights on
+  // a 0.82-roughness facade at exposure 0.6 gave nothing back. A cool
+  // sky-bounce plus a magenta street-bounce puts a readable value on every
+  // wall without touching the shadow-casting key.
+  ctx.group.add(new THREE.HemisphereLight(0x3d6ea8, 0x120a18, 0.55));
 
   // centre line + crosswalk
   const dash = [];
@@ -605,8 +752,10 @@ function genStreet(ctx) {
   }
 
   // ── facades ──────────────────────────────────────────────────────
-  const dark = surf(P, 0x11131d, 0.82, 0.28);
-  const dark2 = surf(P, 0x171a26, 0.75, 0.35);
+  // Values raised out of the black and given a wet-concrete spec so the
+  // canyon actually has walls; the neon is what should be dark-on-bright.
+  const dark = surf(P, 0x22262f, 0.62, 0.34);
+  const dark2 = surf(P, 0x2b3040, 0.55, 0.42);
   const alleys = [];
   for (const s of [-1, 1]) {
     let z = -H * 1.25;
@@ -625,8 +774,18 @@ function genStreet(ctx) {
       const cx = s * (walkOuter + dep / 2);
       const mat = ctx.chance(0.5) ? dark : dark2;
       ctx.group.add(box(P, dep, h, w, mat, cx, h / 2, z + w / 2));
-      // parapet trim — on every roofline the skyline turns into one big glow
-      if (ctx.chance(0.6)) ctx.group.add(strip(ctx, dep, 0.14, w, ctx.one(NEONS), cx, h + 0.1, z + w / 2, 0, 1.05));
+      // Parapet trim. This used to be a single strip(dep, 0.14, w) — i.e. a
+      // solid emissive slab covering the entire roof, up to 16×13 m of flat
+      // saturated neon. From the default camera you looked straight down at
+      // them and the map was littered with floating coloured quads. It has to
+      // be an edge frame: four thin bars around the roofline.
+      if (ctx.chance(0.6)) {
+        const tc = ctx.one(NEONS), rz = z + w / 2, t = 0.16;
+        ctx.group.add(strip(ctx, dep, t, t, tc, cx, h + 0.08, rz - w / 2, 0, 1.3));
+        ctx.group.add(strip(ctx, dep, t, t, tc, cx, h + 0.08, rz + w / 2, 0, 1.3));
+        ctx.group.add(strip(ctx, t, t, w, tc, cx - dep / 2, h + 0.08, rz, 0, 1.3));
+        ctx.group.add(strip(ctx, t, t, w, tc, cx + dep / 2, h + 0.08, rz, 0, 1.3));
+      }
       // lit windows on the street-facing wall
       const fx = s * (walkOuter + 0.06);
       const cols = Math.max(1, Math.floor(w / 1.9));
@@ -642,11 +801,14 @@ function genStreet(ctx) {
           ctx.win(fx, wy, wx, s > 0 ? -Math.PI / 2 : Math.PI / 2, 0.82, 1.05, tint.getHex());
         }
       }
-      // signage on the facade
+      // signage on the facade, plus its reflection down the wet road
       if (ctx.chance(0.75)) {
-        signBlade(ctx, s * (walkOuter - 0.75), ctx.r(4, Math.min(11, h - 2)), z + w * ctx.r(0.25, 0.75),
-          s > 0 ? -Math.PI / 2 : Math.PI / 2, ctx.one(SIGN_WORDS), ctx.one(NEONS), ctx.chance(0.6));
+        const sc = ctx.one(NEONS), sz = z + w * ctx.r(0.25, 0.75);
+        signBlade(ctx, s * (walkOuter - 0.75), ctx.r(4, Math.min(11, h - 2)), sz,
+          s > 0 ? -Math.PI / 2 : Math.PI / 2, ctx.one(SIGN_WORDS), sc, ctx.chance(0.6));
+        wetReflection(ctx, s * ctx.r(roadHalf * 0.25, roadHalf * 0.85), sz, sc, 2.6, 11, 0.20);
       }
+      rooftop(ctx, cx, z + w / 2, dep, w, h);
       z += w + ctx.r(0.4, 1.6);
     }
   }
@@ -711,13 +873,20 @@ function genStreet(ctx) {
       ctx.group.add(box(P, 1.6 * -s, 0.1, 0.1, surf(P, 0x1a1e28, 0.6, 0.7), x - s * 0.8, 5.9, z, 0, false));
       const head = strip(ctx, 1.1, 0.14, 0.34, 0xbfe9ff, x - s * 1.4, 5.8, z, 0, 1.5);
       ctx.group.add(head);
-      addLightShaft(ctx, x - s * 1.4, 5.75, z, 2.0, 5.6, 0x9fdcff, 0.028);
-      addGlowDecal(ctx, x - s * 1.4, z, 3.0, 0x8fd8ff, 0.16, 0.025);
-      if (realLights < 3) {
-        const pl = new THREE.PointLight(0xbfe9ff, 26, 22, 2);
+      addLightShaft(ctx, x - s * 1.4, 5.75, z, 2.0, 5.6, 0x9fdcff, 0.022);
+      addGlowDecal(ctx, x - s * 1.4, z, 3.4, 0x8fd8ff, 0.20, 0.025);
+      if (realLights < 6) {
+        const pl = new THREE.PointLight(0xbfe9ff, 22, 20, 2);
         pl.position.set(x - s * 1.4, 5.6, z); ctx.group.add(pl); realLights++;
       }
     }
+  }
+  // Two coloured sign lights: the thing that makes a neon canyon read is
+  // saturated bounce on the opposite wall, not the sign itself.
+  for (const [cx, cc] of [[-walkOuter + 1.5, 0xff2d95], [walkOuter - 1.5, 0x00e5ff]]) {
+    const pl = new THREE.PointLight(cc, 30, 26, 2);
+    pl.position.set(cx, ctx.r(5, 9), ctx.r(-H * 0.5, H * 0.5));
+    ctx.group.add(pl);
   }
 
   // ── holo billboards ─────────────────────────────────────────────
@@ -726,10 +895,12 @@ function genStreet(ctx) {
   const boards = ctx.ri(2, 3);
   for (let i = 0; i < boards; i++) {
     const s = i % 2 ? 1 : -1;
-    holoBoard(ctx, s * (walkOuter - 0.4), ctx.r(7, 15), ctx.r(-H * 0.8, H * 0.8),
+    const bc = ctx.one(NEONS), bzz = ctx.r(-H * 0.8, H * 0.8);
+    holoBoard(ctx, s * (walkOuter - 0.4), ctx.r(7, 15), bzz,
       s > 0 ? -Math.PI / 2 : Math.PI / 2, ctx.r(6, 9), ctx.r(3.4, 5),
       i === 0 ? (d ? d.name : 'NIGHT CITY') : ctx.one(SIGN_WORDS),
-      i === 0 ? (d ? d.region : 'NC') : ctx.one(gangs), ctx.one(NEONS));
+      i === 0 ? (d ? d.region : 'NC') : ctx.one(gangs), bc);
+    wetReflection(ctx, s * ctx.r(roadHalf * 0.2, roadHalf * 0.9), bzz, bc, 5.5, 16, 0.24);
   }
   graffiti(ctx, -walkOuter + 0.08, 2.0, ctx.r(-H * 0.7, H * 0.7), Math.PI / 2, ctx.one(gangs), ctx.one(NEONS), 5, 2.4);
 
@@ -748,7 +919,11 @@ function genStreet(ctx) {
   const nz = ctx.r(-H * 0.6, H * 0.6), ns = ctx.chance(0.5) ? -1 : 1;
   const nx = ns * (roadHalf + 1.6);
   ctx.group.add(box(P, 2.4, 1.1, 3.4, surf(P, 0x2a1a12, 0.85, 0.15), nx, 0.9, nz));
-  ctx.group.add(box(P, 3.0, 0.12, 4.0, glow(P, 0xff2d95, 0.8), nx, 2.6, nz));
+  // Awning: an opaque canopy with a lit edge, not a 3×4 m slab of flat magenta
+  // (which is what you saw looking down at it).
+  ctx.group.add(box(P, 3.0, 0.12, 4.0, surf(P, 0x3a1220, 0.8, 0.2), nx, 2.6, nz));
+  ctx.group.add(strip(ctx, 3.0, 0.07, 0.07, 0xff2d95, nx, 2.55, nz - 2.0, 0, 2.2));
+  ctx.group.add(strip(ctx, 3.0, 0.07, 0.07, 0xff2d95, nx, 2.55, nz + 2.0, 0, 2.2));
   ctx.group.add(strip(ctx, 0.1, 0.5, 3.6, 0xff2d95, nx + ns * 1.2, 2.2, nz, 0, 1.6));
   addGlowDecal(ctx, nx, nz, 3.4, 0xff2d95, 0.3, 0.03);
   signBlade(ctx, nx, 3.5, nz, ns > 0 ? -Math.PI / 2 : Math.PI / 2, 'NOODLE', 0xff9100, false);
@@ -760,7 +935,7 @@ function genStreet(ctx) {
   }
   // Big additive haze cards are pure overdraw; a few small ones read the same.
   addRain(ctx, 620, 0x9fd8ff, 0.18);
-  addHaze(ctx, 5, 0x2b6ea8, 16, 2, 12, 0.05);
+  addHaze(ctx, 9, 0x2b6ea8, 11, 1.5, 13, 0.055);
 
   ctx.brief = 'STREET CANYON · sidewalks +0.3m · fire escape +4.2m · skybridge +6.2m';
 }
@@ -770,10 +945,17 @@ function genStreet(ctx) {
 // ═══════════════════════════════════════════════════════════════════
 function genCorpo(ctx) {
   const H = ctx.half, P = ctx.pool;
-  addGround(ctx, 0x171a22, 0.2, 0.55);
+  // Cold glass, not a neon blueprint: a near-mirror stone floor that takes its
+  // colour from the reflection probe, lit by a white key rather than tinted by
+  // the district accent.
+  addGround(ctx, 0x2c313c, 0.08, 0.86);
+  ctx.accent = 0xcfe4f5;
+
+  const sky = new THREE.HemisphereLight(0xdfeaf6, 0x1a1f2a, 0.55);
+  ctx.group.add(sky);
 
   // polished floor sheen + corp seal
-  addGlowDecal(ctx, 0, 0, H * 0.55, ctx.accent, 0.07, 0.012);
+  addGlowDecal(ctx, 0, 0, H * 0.55, 0xbfd8ee, 0.06, 0.012);
 
   // ── BSP floor plan ──────────────────────────────────────────────
   const rooms = [];
@@ -802,11 +984,13 @@ function genCorpo(ctx) {
     { a: [R, R], b: [-R, R], solid: 1 }, { a: [-R, R], b: [-R, -R], solid: 1 });
 
   const WH = 3.3;
-  const wallMat = surf(P, 0x252a36, 0.72, 0.22);
-  const trimMat = glow(P, ctx.accent, 0.95);
+  // Painted drywall reads at a real value; the glowing trim drops to a hairline
+  // so the room is lit architecture rather than a wireframe of itself.
+  const wallMat = surf(P, 0x6c7382, 0.68, 0.10);
+  const trimMat = glow(P, 0xdff0ff, 0.55);
   const glassMat = P.mat('corpglass', () => new THREE.MeshStandardMaterial({
-    color: 0x7fd8ff, transparent: true, opacity: 0.16, roughness: 0.06, metalness: 0.9,
-    emissive: 0x1a4a5a, emissiveIntensity: 0.6, side: THREE.DoubleSide
+    color: 0xbfe2f5, transparent: true, opacity: 0.22, roughness: 0.02, metalness: 1.0,
+    emissive: 0x16303c, emissiveIntensity: 0.5, side: THREE.DoubleSide
   }));
 
   for (const w of walls) {
@@ -846,7 +1030,7 @@ function genCorpo(ctx) {
       for (const side of [-1, 1]) {
         const t = g + side * 1.3;
         const px = w.a[0] + (dx / len) * t, pz = w.a[1] + (dz / len) * t;
-        ctx.group.add(box(P, 0.3, WH, 0.1, glow(P, ctx.accent, 1.7), px, WH / 2, pz, ang, false));
+        ctx.group.add(box(P, 0.16, WH, 0.07, glow(P, 0xdff0ff, 0.9), px, WH / 2, pz, ang, false));
       }
     }
   }
@@ -862,6 +1046,13 @@ function genCorpo(ctx) {
     ctx.group.add(box(P, horiz ? Math.min(rm.w * 0.7, 12) : 0.28, 0.1, horiz ? 0.28 : Math.min(rm.d * 0.7, 12),
       glow(P, 0xdff2ff, 1.5), rm.x, 3.55, rm.z, 0, false));
     addGlowDecal(ctx, rm.x, rm.z, Math.min(rm.w, rm.d) * 0.42, 0xbfe6ff, 0.09, 0.02);
+    // A real ceiling fixture casting a real pool of light — a corpo floor with
+    // no downlight is a floor plan, not a room.
+    if (idx < 5) {
+      const pl = new THREE.PointLight(0xeaf4ff, 26, Math.max(rm.w, rm.d) * 1.1, 2);
+      pl.position.set(rm.x, 3.2, rm.z);
+      ctx.group.add(pl);
+    }
     if (idx === 0) return;                      // atrium stays clear
     const kind = kinds[idx % kinds.length];
     const n = Math.max(1, Math.round((rm.w * rm.d) / 34));
@@ -902,7 +1093,9 @@ function genCorpo(ctx) {
     }
   }
 
-  addHaze(ctx, 5, 0x5fa8c8, 14, 1.5, 5, 0.06);
+  // Kept low and dim: a big bright card near a ceiling light reads as a lens
+  // flare stuck to the edge of the frame.
+  addHaze(ctx, 8, 0x7fa6c4, 7, 0.8, 3.2, 0.035);
   ctx.brief = 'CORPO FLOOR · ' + rooms.length + ' rooms · glass walls · mezzanine +3.9m';
 }
 
@@ -959,7 +1152,7 @@ function fire(ctx, x, z, y, scale, withBarrel) {
 
 // Steam / smoke plume.
 function plume(ctx, x, z, y, h, color, opacity) {
-  const tex = softDisc(ctx.pool, 'haze', 0.0, [[0, 'rgba(255,255,255,.85)'], [0.45, 'rgba(255,255,255,.22)'], [1, 'rgba(255,255,255,0)']]);
+  const tex = softDisc(ctx.pool, 'haze', 0.0, SOFT_STOPS(0.85));
   const mat = new THREE.SpriteMaterial({ map: tex, color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false });
   ctx.disposables.push(mat);
   const items = [];
@@ -990,18 +1183,21 @@ function plume(ctx, x, z, y, h, color, opacity) {
 // ═══════════════════════════════════════════════════════════════════
 function genCombat(ctx) {
   const H = ctx.half, P = ctx.pool;
-  addGround(ctx, 0x3d3026, 0.95, 0.06);
-  // The theme key light is a low orange; on its own the zone goes to mud.
-  // A warm bounce plus a cold sky fill keeps silhouettes readable.
-  ctx.group.add(new THREE.AmbientLight(0xffc9a8, 0.55));
-  const moon = new THREE.DirectionalLight(0x7fa8d8, 0.85);
-  moon.position.set(-50, 70, -40);
-  ctx.group.add(moon);
+  addGround(ctx, 0x3c352c, 0.97, 0.04);
+  // A flat 0.55 warm ambient used to wash every surface to the same value —
+  // 50% of the frame landed in a single luminance bucket and the zone read as
+  // brown paper. Replaced with a hard cold moon key so the barrel fires are the
+  // only warm light in the map and every silhouette gets a cool rim.
+  // (the moon is TUNE.combatzone's key — it casts, so the ruins get shadows)
+  ctx.group.add(new THREE.HemisphereLight(0x5a72a4, 0x14100a, 0.30));
 
   const gangs = (ctx.district && ctx.district.gangs) || ['MAELSTROM', '6TH STREET'];
-  const conc = surf(P, 0x4a4238, 0.94, 0.06);
-  const conc2 = surf(P, 0x3b332b, 0.95, 0.05);
-  const rust = surf(P, 0x6b452a, 0.92, 0.35);
+  // Three concrete values instead of two near-identical ones, so a wall of
+  // slabs has internal contrast rather than reading as one tan mass.
+  const conc = surf(P, 0x6f6a61, 0.94, 0.06);
+  const conc2 = surf(P, 0x39352f, 0.95, 0.05);
+  const conc3 = surf(P, 0x544e45, 0.94, 0.06);
+  const rust = surf(P, 0x7a4526, 0.90, 0.40);
 
   // ── ruined shells ───────────────────────────────────────────────
   const shells = ctx.ri(3, 5);
@@ -1020,7 +1216,7 @@ function genCombat(ctx) {
         const sh = ctx.chance(0.25) ? ctx.r(0.6, 1.8) : ctx.r(3.0, 6.4);
         const off = t + sw / 2;
         const px = ex + Math.cos(ea) * 0 + (ea ? 0 : off), pz = ez + (ea ? off : 0);
-        g.add(box(P, ea ? 0.42 : sw, sh, ea ? sw : 0.42, ctx.chance(0.5) ? conc : conc2, px, sh / 2, pz, 0, true));
+        g.add(box(P, ea ? 0.42 : sw, sh, ea ? sw : 0.42, ctx.one([conc, conc2, conc3]), px, sh / 2, pz, 0, true));
         t += sw + ctx.r(0.05, 0.5);
       }
     }
@@ -1051,7 +1247,7 @@ function genCombat(ctx) {
       p: [ctx.r(-H, H), s * 0.4, ctx.r(-H, H)],
       r: [ctx.r(0, 3), ctx.r(0, 3), ctx.r(0, 3)],
       s: [s, s * ctx.r(0.5, 1), s * ctx.r(0.7, 1.3)],
-      c: ctx.one([0x585047, 0x453d34, 0x6b6259])
+      c: ctx.one([0x6e6659, 0x3a342c, 0x8b8276, 0x4d463c])
     });
   }
   const im = instanced(P.geo('chunk', () => new THREE.IcosahedronGeometry(1, 0)), surf(P, 0xffffff, 0.95, 0.05), chunks, true);
@@ -1101,9 +1297,13 @@ function genCombat(ctx) {
   let ph = ctx.rng() * 6;
   ctx.anim.push(t => { bs.visible = !(Math.sin(t * 6.3 + ph) > 0.72 && Math.sin(t * 23 + ph) > 0); });
 
-  addMotes(ctx, 260, 0xff9a3c, 0.16, 1.0, ctx.M * 1.2, 16);
-  addRain(ctx, 320, 0xc8a888, 0.13);
-  addHaze(ctx, 6, 0x8a4a22, 18, 1, 12, 0.07);
+  // No rain here — tan streaks over barrel fires read as scratches on the lens
+  // and fought the one thing this theme has going for it. Ash and smoke instead.
+  // Spread stays inside the play area: at 1.2·M the motes sat past the map edge
+  // and read as a starfield rather than embers over the ruins.
+  addMotes(ctx, 240, 0xff9a3c, 0.16, 1.0, ctx.M * 0.9, 12);
+  addMotes(ctx, 120, 0x9a9088, 0.11, 0.35, ctx.M * 0.9, 15);
+  addHaze(ctx, 10, 0x5a4a52, 13, 0.8, 12, 0.075);
   ctx.brief = 'COMBAT ZONE · ' + shells + ' ruins · collapsed floors +3–4m · rubble ramps';
 }
 
@@ -1112,7 +1312,10 @@ function genCombat(ctx) {
 // ═══════════════════════════════════════════════════════════════════
 function genIndustrial(ctx) {
   const H = ctx.half, P = ctx.pool;
-  addGround(ctx, 0x16181d, 0.9, 0.14);
+  addGround(ctx, 0x1c1f26, 0.86, 0.20);
+  // Sodium floods alone made the whole yard one yellow note. A cold sky term
+  // gives the container tops and gantry steel a second colour to sit against.
+  ctx.group.add(new THREE.HemisphereLight(0x4a6a96, 0x14161c, 0.55));
 
   // hazard striping + bay markings
   for (let i = 0; i < 3; i++) {
@@ -1125,7 +1328,8 @@ function genIndustrial(ctx) {
 
   // ── container stacks (instanced, climbable) ─────────────────────
   const CW = 6.1, CH = 2.6, CD = 2.44;
-  const CCOL = [0xc2452b, 0x1f6f8b, 0x2f7d4a, 0xd08a1e, 0x6b3f8f, 0x8a8f96, 0x2b3d6b];
+  // Lifted out of the mud: under a cold key these were reading as dark blobs.
+  const CCOL = [0xe0603c, 0x3f9cbd, 0x4aa870, 0xf0a832, 0x9a63c4, 0xb8bec6, 0x4a63a0];
   const cont = [];
   const stacks = ctx.ri(7, 12);
   for (let i = 0; i < stacks; i++) {
@@ -1140,7 +1344,24 @@ function genIndustrial(ctx) {
     ctx.addPlatform(bx, bz, rot ? CD : CW, rot ? CW : CD, n * CH);
     if (n > 1) ladder(ctx, bx + (rot ? CD / 2 + 0.12 : CW / 2 + 0.12), bz, 0, n * CH, rot ? Math.PI / 2 : 0);
   }
-  const cm = instanced(P.geo('cont', () => new THREE.BoxGeometry(CW, CH, CD)), surf(P, 0xffffff, 0.78, 0.42), cont, true);
+  // Corrugation. Untextured boxes read as toy bricks; a cheap vertical rib map
+  // (modulated by the per-instance colour) is what makes them shipping containers.
+  const ribTex = P.tex('rib', () => {
+    const t = canvasTex(64, 64, (g, w, h) => {
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+      for (let x = 0; x < w; x += 4) {
+        g.fillStyle = 'rgba(0,0,0,.34)'; g.fillRect(x, 0, 2, h);
+        g.fillStyle = 'rgba(255,255,255,.5)'; g.fillRect(x + 2, 0, 1, h);
+      }
+      g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, 0, w, 3); g.fillRect(0, h - 3, w, 3);
+    });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(4, 1);
+    return t;
+  });
+  const contMat = P.mat('contmat', () => new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: ribTex, roughness: 0.74, metalness: 0.46
+  }));
+  const cm = instanced(P.geo('cont', () => new THREE.BoxGeometry(CW, CH, CD)), contMat, cont, true);
   if (cm) ctx.group.add(cm);
 
   // ── gantry catwalk ──────────────────────────────────────────────
@@ -1171,8 +1392,10 @@ function genIndustrial(ctx) {
   const pipeMat = surf(P, 0x3d444f, 0.6, 0.75);
   const pipeMat2 = surf(P, 0x5a4030, 0.75, 0.55);
   for (let i = 0; i < 5; i++) {
-    const py = ctx.r(6.6, 9.4), pz = ctx.r(-H, H), rad = ctx.r(0.16, 0.32);
-    const p = cyl(P, rad, rad, H * 2.2, 10, ctx.chance(0.5) ? pipeMat : pipeMat2, 0, py, pz, false);
+    // Kept inside 0.72·H: at full H a pipe runs straight across the near edge
+    // of the default camera and reads as a stray tube in front of the lens.
+    const py = ctx.r(7.4, 10.2), pz = ctx.r(-H * 0.72, H * 0.72), rad = ctx.r(0.16, 0.32);
+    const p = cyl(P, rad, rad, H * 1.9, 10, ctx.chance(0.5) ? pipeMat : pipeMat2, 0, py, pz, false);
     p.rotation.z = Math.PI / 2;
     ctx.group.add(p);
     for (let k = -2; k <= 2; k++) {
@@ -1191,7 +1414,13 @@ function genIndustrial(ctx) {
     const r = ctx.r(1.6, 2.8), h = ctx.r(4, 8);
     const x = ctx.r(-H * 0.85, H * 0.85), z = ctx.r(-H * 0.85, H * 0.85);
     ctx.group.add(cyl(P, r, r, h, 16, surf(P, 0x474f5a, 0.68, 0.66), x, h / 2, z));
-    ctx.group.add(cyl(P, r * 1.06, r * 1.06, 0.2, 16, glow(P, 0xffd600, 0.8), x, h + 0.1, z, false));
+    // Lid + a lit rim ring. The old cap was a full-radius emissive disc, so
+    // every tank showed as a solid yellow circle from above.
+    ctx.group.add(cyl(P, r * 1.02, r * 1.02, 0.18, 16, surf(P, 0x353c46, 0.7, 0.6), x, h + 0.09, z, false));
+    const rim = new THREE.Mesh(P.geo('tankrim', () => new THREE.TorusGeometry(1, 0.05, 6, 24)), glow(P, 0xffb020, 0.55));
+    rim.rotation.x = Math.PI / 2; rim.scale.setScalar(r * 1.04);
+    rim.position.set(x, h + 0.2, z);
+    ctx.group.add(rim);
     ctx.group.add(cyl(P, r * 1.02, r * 1.02, 0.14, 16, surf(P, 0x2a2f38, 0.8, 0.4), x, h * 0.55, z, false));
     if (ctx.chance(0.5)) plume(ctx, x, z, h, 7, 0xbfd8e8, 0.13);
   }
@@ -1217,7 +1446,7 @@ function genIndustrial(ctx) {
     staticVehicle(ctx, ctx.one(['truck', 'van']), ctx.r(-H * 0.8, H * 0.8), ctx.r(-H * 0.8, H * 0.8), ctx.r(0, 6.28), false);
   }
   plume(ctx, ctx.r(-H * 0.6, H * 0.6), ctx.r(-H * 0.6, H * 0.6), 0.2, 5, 0xdfe9f5, 0.16);
-  addHaze(ctx, 6, 0x6a6250, 18, 2, 12, 0.09);
+  addHaze(ctx, 10, 0x5e5a4e, 12, 2, 13, 0.06);
   ctx.brief = 'INDUSTRIAL YARD · ' + stacks + ' container stacks · gantry +5.4m';
 }
 
@@ -1259,15 +1488,40 @@ function genNetrun(ctx) {
   // ── floating data platforms (real verticality) ──────────────────
   const levels = [3.2, 6.4, 9.6];
   const plats = [];
-  for (let i = 0; i < ctx.ri(5, 8); i++) {
+  // Platforms used to be placed blind, so two on the same level regularly
+  // overlapped and z-fought — the first thing you noticed in the void.
+  const fits = (x, z, w, d, y) => !plats.some(p =>
+    Math.abs(p.y - y) < 0.1 &&
+    Math.abs(p.x - x) < (p.w + w) / 2 + 1.5 &&
+    Math.abs(p.z - z) < (p.d + d) / 2 + 1.5);
+  // A luminous deck: the slab was near-black, so all you saw was the neon edge
+  // frame and the platforms read as flat 2D rectangles floating at odd angles.
+  const deckTex = P.tex('netdeck', () => {
+    const t = canvasTex(128, 128, (g, w, h) => {
+      g.fillStyle = '#06182a'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(0,255,213,.55)'; g.lineWidth = 2;
+      for (let i = 0; i <= 4; i++) {
+        const p = (i / 4) * w;
+        g.beginPath(); g.moveTo(p, 0); g.lineTo(p, h); g.stroke();
+        g.beginPath(); g.moveTo(0, p); g.lineTo(w, p); g.stroke();
+      }
+    });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+  for (let i = 0, guard = 0; i < ctx.ri(5, 8) && guard < 80; guard++) {
     const w = Math.round(ctx.r(6, 14) / 2) * 2, d = Math.round(ctx.r(6, 14) / 2) * 2;
     const x = Math.round(ctx.r(-H * 0.75, H * 0.75) / 2) * 2;
     const z = Math.round(ctx.r(-H * 0.75, H * 0.75) / 2) * 2;
     const y = ctx.one(levels);
+    if (!fits(x, z, w, d, y)) continue;
+    i++;
     const col = ctx.one(NET);
-    ctx.group.add(box(P, w, 0.3, d, P.mat('netslab', () => new THREE.MeshStandardMaterial({
-      color: 0x0a1024, roughness: 0.3, metalness: 0.7, emissive: 0x050a18, emissiveIntensity: 1
-    })), x, y, z, 0, false));
+    const slab = box(P, w, 0.3, d, P.mat('netslab', () => new THREE.MeshStandardMaterial({
+      color: 0x123048, map: deckTex, roughness: 0.28, metalness: 0.72,
+      emissive: 0x0a2434, emissiveIntensity: 1.6
+    })), x, y, z, 0, false);
+    ctx.group.add(slab);
     // luminous edge frame
     ctx.group.add(strip(ctx, w + 0.16, 0.1, 0.16, col, x, y + 0.2, z - d / 2, 0, 1.5));
     ctx.group.add(strip(ctx, w + 0.16, 0.1, 0.16, col, x, y + 0.2, z + d / 2, 0, 1.5));
@@ -1304,15 +1558,37 @@ function genNetrun(ctx) {
     const x = ctx.r(-H * 0.95, H * 0.95), z = ctx.r(-H * 0.95, H * 0.95);
     const h = ctx.r(10, 26), w = ctx.r(1.2, 2.8);
     const col = ctx.one(NET);
+    // The old body was 0x070c1c lit only by a 0.3 key in a black void, i.e.
+    // invisible — so the light bands read as loose cubes hanging in space with
+    // nothing between them. A circuit-trace map gives the shaft its own
+    // silhouette without adding a single draw call.
+    const ry0 = ctx.r(0, 1.5);
+    const traceTex = P.tex('nettrace', () => {
+      const t = canvasTex(64, 256, (g, w2, h2) => {
+        g.fillStyle = '#0b1830'; g.fillRect(0, 0, w2, h2);
+        g.strokeStyle = 'rgba(0,255,213,.55)'; g.lineWidth = 3;
+        for (let i = 0; i < 7; i++) {
+          const bx = 8 + (i * 11) % (w2 - 16);
+          g.beginPath(); g.moveTo(bx, 0); g.lineTo(bx, h2); g.stroke();
+        }
+        g.strokeStyle = 'rgba(124,77,255,.45)'; g.lineWidth = 2;
+        for (let y = 6; y < h2; y += 17) { g.beginPath(); g.moveTo(0, y); g.lineTo(w2, y); g.stroke(); }
+      });
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 3);
+      return t;
+    });
     ctx.group.add(box(P, w, h, w, P.mat('pylon', () => new THREE.MeshStandardMaterial({
-      color: 0x070c1c, roughness: 0.25, metalness: 0.85
-    })), x, h / 2, z, ctx.r(0, 1.5), false));
+      color: 0x2a3f66, map: traceTex, roughness: 0.24, metalness: 0.88,
+      emissive: 0x0e2a3e, emissiveIntensity: 2.0
+    })), x, h / 2, z, ry0, false));
     const bands = [];
-    for (let y = 1; y < h; y += ctx.r(1.4, 3.2)) bands.push({ p: [x, y, z], s: [w * 1.08, 0.12, w * 1.08], c: new THREE.Color(col).multiplyScalar(0.95).getHex() });
+    for (let y = 1; y < h; y += ctx.r(1.4, 3.2)) bands.push({ p: [x, y, z], r: [0, ry0, 0], s: [w * 1.10, 0.12, w * 1.10], c: new THREE.Color(col).multiplyScalar(0.95).getHex() });
     const bm = instanced(P.geo('bandbox', () => new THREE.BoxGeometry(1, 1, 1)),
       P.mat('bandm', () => new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, fog: true })), bands, false);
-    if (bm) { ctx.group.add(bm); ctx.anim.push(t => { bm.position.y = (Math.sin(t * 0.6 + x) * 0.6); }); }
-    ctx.group.add(strip(ctx, w * 1.15, 0.22, w * 1.15, col, x, h, z, 0, 1.6));
+    // Sliding the whole band mesh used to drift them off the shaft; pulse the
+    // group's scale instead so they stay welded to the pylon.
+    if (bm) { ctx.group.add(bm); ctx.anim.push(t => { const s = 1 + Math.sin(t * 1.4 + x) * 0.06; bm.scale.set(s, 1, s); }); }
+    ctx.group.add(strip(ctx, w * 1.15, 0.22, w * 1.15, col, x, h, z, ry0, 1.6));
   }
 
   // ── abstract constructs (wireframe) ─────────────────────────────
@@ -1364,6 +1640,53 @@ function genNetrun(ctx) {
 function genBadlands(ctx) {
   const H = ctx.half, P = ctx.pool;
 
+  // Night sky. Without it the terrain, the rocks and the backdrop were one
+  // undifferentiated brown — 92% of the frame sat below 0.125 luminance.
+  // A cold dome behind warm ground is what gives the badlands its depth.
+  {
+    const skyMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false, fog: false,
+      uniforms: {
+        uTop: { value: new THREE.Color(0x0a0c22) },
+        uMid: { value: new THREE.Color(0x241f3e) },
+        uHorizon: { value: new THREE.Color(0x7a5340) },
+        uBelow: { value: new THREE.Color(0x100c16) }
+      },
+      vertexShader: 'varying vec3 vD; void main(){ vD=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: `
+        uniform vec3 uTop,uMid,uHorizon,uBelow; varying vec3 vD;
+        // cheap hash starfield
+        float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+        void main(){
+          vec3 n = normalize(vD);
+          float y = n.y;
+          // The default camera looks DOWN, so most of the dome you actually see
+          // is below the horizon. Filling that with the warm horizon colour
+          // painted a flat brown wash over the top 40% of every frame; it has
+          // to fall off into night haze instead.
+          vec3 c = (y >= 0.0)
+            ? mix(uMid, uTop, smoothstep(0.02, 0.55, y))
+            : mix(uBelow, uMid, smoothstep(-0.45, 0.0, y));
+          // thin warm band hugging the true horizon line
+          c = mix(c, uHorizon, exp(-abs(y) * 30.0) * 0.9);
+          if (y > 0.03) {
+            vec2 g = floor(n.xz * 190.0);
+            float s = h(g);
+            if (s > 0.9965) c += vec3(0.85,0.9,1.0) * (s-0.9965) * 260.0 * smoothstep(0.03,0.3,y);
+          }
+          gl_FragColor = vec4(c, 1.0);
+        }`
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(ctx.M * 6, 24, 16), skyMat);
+    dome.frustumCulled = false;
+    dome.userData.noBatch = true;
+    ctx.group.add(dome);
+    ctx.disposables.push(dome.geometry, skyMat);
+  }
+  // Cold moon (TUNE.badlands' shadow-casting key) over warm sand bounce: two
+  // colours of light is the whole reason a desert at night reads as 3D.
+  ctx.group.add(new THREE.HemisphereLight(0x5a6ab0, 0x3a2a1a, 0.55));
+
   // value-noise dunes
   const res = 10, grid = [];
   for (let i = 0; i <= res; i++) { grid[i] = []; for (let j = 0; j <= res; j++) grid[i][j] = ctx.rng(); }
@@ -1382,11 +1705,14 @@ function genBadlands(ctx) {
     const px = pos.getX(i), py = pos.getY(i);
     const u = px / EXT + 0.5, v = py / EXT + 0.5;
     const edge = Math.max(Math.abs(px), Math.abs(py)) / (EXT / 2);
-    const rise = Math.pow(clamp((edge - 0.45) / 0.55, 0, 1), 2) * 7;
+    // The old symmetric rim lifted every edge by the same amount and the map
+    // read as the inside of a dish. Modulating it by noise turns the same
+    // budget into an irregular ridge line.
+    const rise = Math.pow(clamp((edge - 0.42) / 0.58, 0, 1), 2) * (4.5 + noise(u * 1.4, v * 1.4) * 7);
     pos.setZ(i, (noise(u * 2.1, v * 2.1) - 0.5) * 1.5 + (noise(u * 0.8, v * 0.8) - 0.5) * 2.2 + rise);
   }
   tg.computeVertexNormals();
-  const terr = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ color: 0x3a2c1e, roughness: 0.98, metalness: 0.02 }));
+  const terr = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ color: 0x554129, roughness: 0.98, metalness: 0.02 }));
   terr.rotation.x = -Math.PI / 2; terr.receiveShadow = true; terr.userData.noBatch = true;
   ctx.group.add(terr); ctx.surfaces.push(terr);
   ctx.disposables.push(tg, terr.material);
@@ -1394,9 +1720,11 @@ function genBadlands(ctx) {
   const sampleY = (x, z) => {
     const u = x / EXT + 0.5, v = -z / EXT + 0.5;
     const edge = Math.max(Math.abs(x), Math.abs(z)) / (EXT / 2);
-    const rise = Math.pow(clamp((edge - 0.45) / 0.55, 0, 1), 2) * 7;
+    const rise = Math.pow(clamp((edge - 0.42) / 0.58, 0, 1), 2) * (4.5 + noise(u * 1.4, v * 1.4) * 7);
     return (noise(u * 2.1, v * 2.1) - 0.5) * 1.5 + (noise(u * 0.8, v * 0.8) - 0.5) * 2.2 + rise;
   };
+  // let the tactical grid drape over the dunes instead of slicing through them
+  ctx.gridSampleY = (x, z) => sampleY(x, z) + 0.06;
 
   // ── the highway ─────────────────────────────────────────────────
   const roadA = ctx.chance(0.5) ? 0 : Math.PI / 2;
@@ -1424,7 +1752,8 @@ function genBadlands(ctx) {
     const s = ctx.r(0.3, 1.6);
     rocks.push({
       p: [x, sampleY(x, z) + s * 0.35, z], r: [ctx.r(0, 3), ctx.r(0, 3), ctx.r(0, 3)],
-      s: [s * ctx.r(0.8, 1.6), s, s * ctx.r(0.8, 1.6)], c: ctx.one([0x5a4632, 0x473828, 0x6b563c])
+      // Greyed and value-separated from the sand, otherwise the rocks vanish.
+      s: [s * ctx.r(0.8, 1.6), s, s * ctx.r(0.8, 1.6)], c: ctx.one([0x8a7f6d, 0x4a4238, 0x9d9080, 0x6a5f50])
     });
   }
   const rm = instanced(P.geo('rock', () => new THREE.IcosahedronGeometry(1, 0)), surf(P, 0xffffff, 0.97, 0.03), rocks, true);
@@ -1434,10 +1763,10 @@ function genBadlands(ctx) {
   for (let i = 0; i < ctx.ri(2, 3); i++) {
     const x = ctx.r(-H * 0.85, H * 0.85), z = ctx.r(-H * 0.85, H * 0.85);
     const y0 = sampleY(x, z), h = ctx.r(3.2, 5.4), r = ctx.r(3.4, 5.6);
-    const m = cyl(P, r * 0.82, r, h, 7, surf(P, 0x54402c, 0.97, 0.03), x, y0 + h / 2, z);
+    const m = cyl(P, r * 0.82, r, h, 7, surf(P, 0x7a6247, 0.97, 0.03), x, y0 + h / 2, z);
     m.rotation.y = ctx.r(0, 3);
     ctx.group.add(m);
-    ctx.group.add(cyl(P, r * 0.84, r * 0.84, 0.12, 7, surf(P, 0x634d36, 0.96, 0.03), x, y0 + h + 0.05, z, false));
+    ctx.group.add(cyl(P, r * 0.84, r * 0.84, 0.12, 7, surf(P, 0x8f7658, 0.96, 0.03), x, y0 + h + 0.05, z, false));
     ctx.addPlatform(x, z, r * 1.1, r * 1.1, y0 + h + 0.1);
     // a scramble route up
     for (let k = 0; k < 4; k++) {
@@ -1489,7 +1818,7 @@ function genBadlands(ctx) {
   }
 
   addMotes(ctx, 300, 0xd8b070, 0.2, 0.25, ctx.M * 1.6, 14);
-  addHaze(ctx, 8, 0x9c6a34, 26, 1, 14, 0.1);
+  addHaze(ctx, 10, 0x7a5a3c, 18, 0.5, 10, 0.075);
   ctx.brief = 'BADLANDS · open dunes · mesas +3–5m · highway · nomad camp';
 }
 
@@ -1987,26 +2316,65 @@ export async function mount(container, ctx0) {
     } catch (e) { /* ignore */ }
   };
 
-  // Bloom radius 0.6 smears wide-area glow across the whole frame once a map
-  // carries hundreds of emitters, so we tighten it and scale strength per theme.
-  const EXPOSURE = { street: 0.6, corpo: 1.05, combatzone: 1.5, industrial: 1.05, netrun: 0.95, badlands: 1.12 };
-  const BLOOM_MUL = { street: 0.5, corpo: 0.75, combatzone: 0.9, industrial: 0.78, netrun: 0.45, badlands: 1.0 };
   const stage = createStage(container, {
     theme: THEMES[S.theme], fov: 48,
     cameraPos: [0, SIZES[S.size].m * 0.78, SIZES[S.size].m * 0.9], target: [0, 0, 0],
-    exposure: EXPOSURE[S.theme]
+    exposure: TUNE[S.theme].exposure, shadowRadius: SIZES[S.size].m * 0.62
   });
   const { scene, camera, renderer, controls } = stage;
-  stage.bloom.radius = 0.34;
-  stage.bloom.threshold = 0.9;
+  // Bloom radius 0.6 smears wide-area glow across the whole frame once a map
+  // carries hundreds of emitters, so we tighten it. Threshold 0.9 used to clip
+  // smooth haze gradients into hard-edged discs; 0.72 with a softer falloff
+  // texture lets the glow ramp instead of contouring.
+  stage.bloom.radius = 0.42;
+  stage.bloom.threshold = 0.72;
   // Nothing but tokens ever moves, so the shadow map is refreshed on demand
   // instead of every frame — it is the single biggest cost we control.
   renderer.shadowMap.autoUpdate = false;
   const shadowDirty = () => { renderer.shadowMap.needsUpdate = true; };
+
+  // Grab the rig core built so each theme can re-light rather than pile
+  // extra lights on top of it (which is what flattened the combat zone).
+  let keyLight = null, fillLight = null, ambLight = null, hemiLight = null;
+  scene.traverse(o => {
+    if (o.isAmbientLight) ambLight = o;
+    else if (o.isHemisphereLight) hemiLight = o;
+    else if (o.isDirectionalLight) (o.castShadow ? (keyLight = o) : (fillLight = o));
+  });
+
+  let envRT = null;
   function applyTheme(key) {
+    const T = TUNE[key] || TUNE.street;
+    const M = SIZES[S.size].m;
     stage.setTheme(THEMES[key]);
-    stage.bloom.strength = (THEMES[key].bloom ?? 0.8) * (BLOOM_MUL[key] ?? 1);
-    renderer.toneMappingExposure = EXPOSURE[key] ?? 1;
+    stage.bloom.strength = T.bloom;
+    renderer.toneMappingExposure = T.exposure;
+    // Fog scaled to the map so the ground plate dissolves into the backdrop
+    // instead of ending in a hard square edge floating in the void.
+    scene.background = new THREE.Color(T.back);
+    scene.fog.color.set(T.fog);
+    scene.fog.near = M * T.fogN;
+    scene.fog.far = M * T.fogF;
+    if (ambLight) { ambLight.intensity = T.amb; ambLight.color.set(T.ambCol); }
+    if (hemiLight) { hemiLight.intensity = T.hemi; hemiLight.color.set(THEMES[key].key); hemiLight.groundColor.set(T.fog); }
+    if (keyLight) {
+      keyLight.intensity = T.key;
+      keyLight.color.set(T.keyCol);
+      const d = T.keyDir, L = M * 1.1;
+      keyLight.position.set(d[0] * L, d[1] * L, d[2] * L);
+      keyLight.target.position.set(0, 0, 0);
+      keyLight.target.updateMatrixWorld();
+      const sr = M * 0.68;
+      const sc = keyLight.shadow.camera;
+      sc.left = -sr; sc.right = sr; sc.top = sr; sc.bottom = -sr;
+      sc.near = 1; sc.far = M * 3.2; sc.updateProjectionMatrix();
+      keyLight.shadow.bias = -0.0008;
+    }
+    if (fillLight) fillLight.intensity = 0.42;
+    // Per-mount, per-theme reflection probe (see buildEnvProbe).
+    if (envRT) { try { envRT.dispose(); } catch (e) { } envRT = null; }
+    try { envRT = buildEnvProbe(renderer, key); scene.environment = envRT.texture; }
+    catch (e) { /* keep whatever core supplied */ }
   }
   applyTheme(S.theme);
 
@@ -2273,11 +2641,14 @@ export async function mount(container, ctx0) {
     if (gridGroup) { scene.remove(gridGroup); releaseGroup(gridGroup); gridGroup = null; }
     if (!S.grid || !mapCtx) return;
     const M = SIZES[S.size].m, h = M / 2;
-    const a = new THREE.Color(accentHex());
-    const minor = a.clone().multiplyScalar(0.30), major = a.clone().multiplyScalar(1.05);
+    // The grid is an overlay, not set dressing: desaturated toward white and
+    // dimmed so it stops out-shouting the map (the combat zone was a screaming
+    // red lattice over a brown field).
+    const a = new THREE.Color(accentHex()).lerp(new THREE.Color(0xffffff), 0.45);
+    const minor = a.clone().multiplyScalar(0.22), major = a.clone().multiplyScalar(0.62);
     gridGroup = new THREE.Group();
-    gridGroup.add(gridRect(-h, h, -h, h, 0.035, minor, major, 0.4));
-    mapCtx.gridY.forEach(p => gridGroup.add(gridRect(p.x0, p.x1, p.z0, p.z1, p.y, minor, major, 0.5)));
+    gridGroup.add(gridRect(-h, h, -h, h, 0.035, minor, major, 0.30, mapCtx.gridSampleY));
+    mapCtx.gridY.forEach(p => gridGroup.add(gridRect(p.x0, p.x1, p.z0, p.z1, p.y, minor, major, 0.40)));
     // playable-area border
     const bg = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-h, 0, -h), new THREE.Vector3(h, 0, -h),
@@ -2286,7 +2657,7 @@ export async function mount(container, ctx0) {
     const d = district();
     const threat = new THREE.Color(THREAT_COLOR[clamp(d ? d.threat : 0, 0, THREAT_COLOR.length - 1)]);
     const bl = new THREE.Line(bg, new THREE.LineBasicMaterial({
-      color: threat.multiplyScalar(1.6), toneMapped: false, transparent: true, opacity: 0.85
+      color: threat.multiplyScalar(1.25), toneMapped: false, transparent: true, opacity: 0.7
     }));
     bl.position.y = 0.05; gridGroup.add(bl);
     scene.add(gridGroup);
@@ -2660,14 +3031,22 @@ export async function mount(container, ctx0) {
     ndc.x = ((ev.clientX - r.left) / Math.max(1, r.width)) * 2 - 1;
     ndc.y = -((ev.clientY - r.top) / Math.max(1, r.height)) * 2 + 1;
   }
+  // The surface the user is actually pointing at, i.e. the nearest one along
+  // the ray. This used to return the HIGHEST hit, which meant a click on the
+  // road under a catwalk silently teleported the token up onto the catwalk and
+  // there was no way to place anything beneath an overhead platform.
   function pickSurface() {
     if (!mapCtx) return null;
     ray.setFromCamera(ndc, camera);
     const hits = ray.intersectObjects(mapCtx.surfaces, false);
-    if (!hits.length) return null;
-    let best = hits[0];
-    for (const h of hits) if (h.point.y > best.point.y) best = h;
-    return best.point.clone();
+    return hits.length ? hits[0].point.clone() : null;
+  }
+  // Play area = the gridded square. The ground plate now extends to 8×M so it
+  // can dissolve into fog, and without this a stray click drops a token 150 m
+  // off-map where the camera clamp can never reach it.
+  function clampToPlay(v) {
+    const lim = SIZES[S.size].m / 2 - CELL / 2;
+    return clamp(v, -lim, lim);
   }
   function pickToken() {
     if (!tokens.length) return null;
@@ -2675,6 +3054,8 @@ export async function mount(container, ctx0) {
     const hits = ray.intersectObjects(tokens.map(t => t.proxy), false);
     return hits.length ? hits[0].object.userData.token : null;
   }
+  // Highest standable surface over (x,z) — used by "Drop" and by re-seating
+  // tokens after a regenerate.
   function surfaceYAt(x, z) {
     if (!mapCtx) return 0;
     downRay.set(new THREE.Vector3(x, 400, z), new THREE.Vector3(0, -1, 0));
@@ -2684,12 +3065,26 @@ export async function mount(container, ctx0) {
     for (const h of hits) if (h.point.y > y) y = h.point.y;
     return y;
   }
+  // Snapping x/z must not change which deck the token is on. Pick the
+  // standable surface closest to the height the user actually clicked.
+  function surfaceYNear(x, z, refY) {
+    if (!mapCtx) return 0;
+    downRay.set(new THREE.Vector3(x, 400, z), new THREE.Vector3(0, -1, 0));
+    const hits = downRay.intersectObjects(mapCtx.surfaces, false);
+    if (!hits.length) return refY || 0;
+    let y = hits[0].point.y, best = Math.abs(y - refY);
+    for (const h of hits) {
+      const d = Math.abs(h.point.y - refY);
+      if (d < best) { best = d; y = h.point.y; }
+    }
+    return y;
+  }
 
   function placeAt(p, keepArmed) {
     if (!armed) return null;
-    const x = S.snap ? snapV(p.x) : p.x;
-    const z = S.snap ? snapV(p.z) : p.z;
-    const y = S.snap ? surfaceYAt(x, z) : p.y;
+    const x = clampToPlay(S.snap ? snapV(p.x) : p.x);
+    const z = clampToPlay(S.snap ? snapV(p.z) : p.z);
+    const y = S.snap ? surfaceYNear(x, z, p.y) : p.y;
     let t = null;
     if (armed.kind === 'char') {
       const c = armed.data;
@@ -2792,8 +3187,8 @@ export async function mount(container, ctx0) {
     if (dragging) {
       const p = pickSurface();
       if (p) {
-        const x = S.snap ? snapV(p.x) : p.x, z = S.snap ? snapV(p.z) : p.z;
-        setTokenPos(dragging, x, S.snap ? surfaceYAt(x, z) : p.y, z);
+        const x = clampToPlay(S.snap ? snapV(p.x) : p.x), z = clampToPlay(S.snap ? snapV(p.z) : p.z);
+        setTokenPos(dragging, x, S.snap ? surfaceYNear(x, z, p.y) : p.y, z);
         if (turnRing.visible) { const o = initOrder()[S.turn]; if (o === dragging) turnRing.position.set(x, dragging.y + 0.04, z); }
       }
       return;
@@ -2888,7 +3283,7 @@ export async function mount(container, ctx0) {
     S.districtIdx = clamp(rec.districtIdx | 0, 0, Math.max(0, DISTRICTS.length - 1));
     S.theme = THEMES[rec.theme] ? rec.theme : 'street';
     S.size = SIZES[rec.size] ? rec.size : 'medium';
-    S.seed = rec.seed; S.round = rec.round || 1; S.turn = rec.turn || 0;
+    S.seed = rec.seed;
     S.name = rec.name || '';
     $('e3-district').value = String(S.districtIdx);
     $('e3-theme').value = S.theme; $('e3-size').value = S.size; $('e3-seed').value = S.seed;
@@ -2901,6 +3296,12 @@ export async function mount(container, ctx0) {
       x: d.x, y: d.y, z: d.z, rot: d.rot, hp: d.hp, maxHp: d.maxHp,
       initiative: d.initiative, color: d.color
     }));
+    // Restored *after* the rebuild: clearTokens() runs renderInit() on a
+    // shrinking order and its `if (S.turn >= order.length) S.turn = 0` clamp
+    // wiped the saved turn, so loading a mid-combat encounter always dropped
+    // back to the top of the initiative order.
+    S.round = rec.round || 1;
+    S.turn = rec.turn || 0;
     if (rec.cam) {
       camera.position.fromArray(rec.cam.p);
       controls.target.fromArray(rec.cam.t);
@@ -3013,6 +3414,8 @@ export async function mount(container, ctx0) {
     animTokens.length = 0;
     if (TOK && typeof TOK.disposeTokenCaches === 'function') { try { TOK.disposeTokenCaches(); } catch (e) { } }
     if (mapCtx) mapCtx.disposables.forEach(d => { try { d.dispose && d.dispose(); } catch (e) { } });
+    if (envRT) { try { envRT.dispose(); } catch (e) { } envRT = null; }
+    scene.environment = null;
     try { origDispose(); } catch (e) { console.error(e); }
     pool.dispose();
     ui.remove();
