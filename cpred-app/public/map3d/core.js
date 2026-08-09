@@ -62,6 +62,9 @@ export function createStage(container, opts = {}) {
   container.appendChild(renderer.domElement);
   Object.assign(renderer.domElement.style, { display: 'block', width: '100%', height: '100%' });
 
+  // Give physical materials something to reflect (chrome/metal is black without it)
+  if (opts.environment !== false) scene.environment = environmentMap(renderer);
+
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.07;
@@ -138,6 +141,43 @@ export function createStage(container, opts = {}) {
       renderer.domElement.remove();
     }
   };
+}
+
+// ── Shared environment map ─────────────────────────────────────────
+// Physical materials need something to reflect: without scene.environment
+// three shades metal/chrome pure black. One PMREM-filtered procedural
+// "night city" probe is built once and reused by every mode.
+let _envTex = null;
+export function environmentMap(renderer) {
+  if (_envTex) return _envTex;
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  // horizon gradient: dark street below, cool haze above
+  const sky = g.createLinearGradient(0, 0, 0, 128);
+  sky.addColorStop(0.0, '#0a1020');
+  sky.addColorStop(0.45, '#16283f');
+  sky.addColorStop(0.55, '#241a2e');
+  sky.addColorStop(1.0, '#080810');
+  g.fillStyle = sky; g.fillRect(0, 0, 256, 128);
+  // scattered neon emitters so chrome picks up coloured highlights
+  const hues = ['#00e5ff', '#ff2d95', '#ffd600', '#7c4dff', '#69f0ae'];
+  for (let i = 0; i < 44; i++) {
+    const x = Math.random() * 256, y = 58 + Math.random() * 54;
+    const r = 3 + Math.random() * 11;
+    const col = hues[(Math.random() * hues.length) | 0];
+    const rg = g.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, col); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  _envTex = pmrem.fromEquirectangular(tex).texture;
+  pmrem.dispose(); tex.dispose();
+  return _envTex;
 }
 
 // Emissive neon material helper — used for signage, edges and token rings
