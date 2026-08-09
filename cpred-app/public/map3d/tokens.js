@@ -35,7 +35,7 @@
 // ═══════════════════════════════════════════════════════════════════
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { PALETTE, THREAT_COLOR, neonMaterial, seededRandom, ipc } from './core.js';
+import { PALETTE, THREAT_COLOR, seededRandom, ipc } from './core.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // 1. RESOURCE LAYER — cached geometry, cached textures, merged parts
@@ -53,23 +53,30 @@ function G(key, factory) {
 const TAU = Math.PI * 2;
 const n = (v) => Math.round(v * 1000) / 1000; // key normaliser
 
+// Tessellation budget for solid primitives. These are 0.1-2 m volumes viewed
+// from 20 m+; the extra rings were invisible at play distance and multiplied
+// across ~60 primitives x 30 tokens in both the colour and the shadow pass.
+// Flat furniture (base rings, ground discs) is deliberately exempt — a
+// faceted ownership ring is the one thing a GM actually stares at.
+const S = (v, min = 4) => Math.max(min, Math.round(v * 0.8));
+
 // Shared primitive geometry. Segment counts are deliberately modest: these
 // are 1-2 metre props seen from 10+ metres, and every extra ring multiplies
 // across 30 tokens.
 const Geo = {
   box: (w, h, d) => G(`box|${n(w)}|${n(h)}|${n(d)}`, () => new THREE.BoxGeometry(w, h, d)),
-  cyl: (rt, rb, h, rs = 12, hs = 1, open = false, ts = 0, tl = TAU) =>
-    G(`cyl|${n(rt)}|${n(rb)}|${n(h)}|${rs}|${hs}|${open}|${n(ts)}|${n(tl)}`,
-      () => new THREE.CylinderGeometry(rt, rb, h, rs, hs, open, ts, tl)),
-  sph: (r, ws = 14, hs = 10, ps = 0, pl = TAU, ths = 0, thl = Math.PI) =>
-    G(`sph|${n(r)}|${ws}|${hs}|${n(ps)}|${n(pl)}|${n(ths)}|${n(thl)}`,
-      () => new THREE.SphereGeometry(r, ws, hs, ps, pl, ths, thl)),
-  cap: (r, h, cs = 5, rs = 12) =>
-    G(`cap|${n(r)}|${n(h)}|${cs}|${rs}`, () => new THREE.CapsuleGeometry(r, h, cs, rs)),
-  torus: (r, t, rs = 8, ts = 18, arc = TAU) =>
-    G(`tor|${n(r)}|${n(t)}|${rs}|${ts}|${n(arc)}`, () => new THREE.TorusGeometry(r, t, rs, ts, arc)),
-  cone: (r, h, rs = 10, open = false) =>
-    G(`cone|${n(r)}|${n(h)}|${rs}|${open}`, () => new THREE.ConeGeometry(r, h, rs, 1, open)),
+  cyl: (rt, rb, h, rs0 = 12, hs = 1, open = false, ts = 0, tl = TAU) =>
+    ((rs) => G(`cyl|${n(rt)}|${n(rb)}|${n(h)}|${rs}|${hs}|${open}|${n(ts)}|${n(tl)}`,
+      () => new THREE.CylinderGeometry(rt, rb, h, rs, hs, open, ts, tl)))(S(rs0)),
+  sph: (r, ws0 = 14, hs0 = 10, ps = 0, pl = TAU, ths = 0, thl = Math.PI) =>
+    ((ws, hs) => G(`sph|${n(r)}|${ws}|${hs}|${n(ps)}|${n(pl)}|${n(ths)}|${n(thl)}`,
+      () => new THREE.SphereGeometry(r, ws, hs, ps, pl, ths, thl)))(S(ws0, 5), S(hs0, 4)),
+  cap: (r, h, cs0 = 5, rs0 = 12) =>
+    ((cs, rs) => G(`cap|${n(r)}|${n(h)}|${cs}|${rs}`, () => new THREE.CapsuleGeometry(r, h, cs, rs)))(S(cs0, 3), S(rs0, 5)),
+  torus: (r, t, rs0 = 8, ts0 = 18, arc = TAU) =>
+    ((rs, ts) => G(`tor|${n(r)}|${n(t)}|${rs}|${ts}|${n(arc)}`, () => new THREE.TorusGeometry(r, t, rs, ts, arc)))(S(rs0), S(ts0, 6)),
+  cone: (r, h, rs0 = 10, open = false) =>
+    ((rs) => G(`cone|${n(r)}|${n(h)}|${rs}|${open}`, () => new THREE.ConeGeometry(r, h, rs, 1, open)))(S(rs0, 3)),
   ring: (ri, ro, seg = 48, ts = 0, tl = TAU) =>
     G(`ring|${n(ri)}|${n(ro)}|${seg}|${n(ts)}|${n(tl)}`, () => new THREE.RingGeometry(ri, ro, seg, 1, ts, tl)),
   circle: (r, seg = 40) => G(`cir|${n(r)}|${seg}`, () => new THREE.CircleGeometry(r, seg)),
@@ -131,51 +138,164 @@ function TRS(px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 2. MATERIAL DESCRIPTORS
-// A descriptor is { k, f, tr } — a cache key, a factory and a
-// "transparent/emissive, don't cast shadows" flag. Merging buckets by k
-// is what collapses a token down to a handful of draw calls.
+// 2. MATERIAL FAMILIES  ── the thing that makes 30+ tokens cheap
+//
+// The old scheme minted one material per merge bucket per token, so 42
+// characters meant ~900 live materials. three sorts opaque draws by
+// material.id, so every single draw call was a material change and paid a
+// full uniform upload; the frame cost scaled with token count no matter how
+// well the geometry merged.
+//
+// Now every surface resolves to one of a small set of *families* (skin,
+// cloth, hide, plate, chrome, glow…) and its colour rides in a per-vertex
+// attribute instead of a uniform. One family == one material == one shader
+// program, shared by every token on the map, so the painter sort lumps the
+// whole encounter into a handful of state changes and the per-character look
+// is unchanged — the colour is still per-part, it just lives in the geometry.
+//
+// A descriptor is:
+//   { key, fam:1, col, gain, tr, f }   family surface, colour -> vertex attr
+//   { key, f, tr }                     unique surface (carries a texture map)
+// `tr` means "emissive or blended": no shadow casting, late render order.
+// Both kinds go through acquireMat(), which refcounts, so two crates or two
+// Solos share one material and dispose() can never free one out from under a
+// token that is still on the table.
 // ═══════════════════════════════════════════════════════════════════
 
 const hex = (c) => (typeof c === 'number' ? c : new THREE.Color(c).getHex());
+const DS = THREE.DoubleSide;
+
+// Physical surface families. Roughness/metalness are quantised on purpose:
+// the eye cannot tell 0.88 from 0.92 on a 1.8 m figure seen from 25 m, but
+// the renderer can very much tell one material from two.
+// envMapIntensity is deliberately generous on the soft surfaces: the stage's
+// probe is a neon-lit night street, so leaning on it is what puts coloured
+// bounce into the shadow side of a figure instead of leaving it black.
+const FAMILY = {
+  skin:   { roughness: 0.70, metalness: 0.00, envMapIntensity: 0.95 },
+  cloth:  { roughness: 0.88, metalness: 0.04, envMapIntensity: 1.00 },
+  hide:   { roughness: 0.54, metalness: 0.12, envMapIntensity: 1.20, side: DS },
+  plate:  { roughness: 0.40, metalness: 0.52, envMapIntensity: 1.15 },
+  metal:  { roughness: 0.55, metalness: 0.64, envMapIntensity: 1.15 },
+  grime:  { roughness: 0.88, metalness: 0.50, envMapIntensity: 0.80 },
+  chrome: { roughness: 0.17, metalness: 1.00, envMapIntensity: 1.50 },
+  stone:  { roughness: 0.96, metalness: 0.00, envMapIntensity: 0.50 },
+  glass:  { roughness: 0.07, metalness: 0.90, envMapIntensity: 1.30, emissive: 0x11293a, emissiveIntensity: 0.7 }
+};
+
+// Every standard material we build goes through here so the environment
+// fallback (see §3) can be applied consistently.
+function stdMaterial(spec) {
+  const m = new THREE.MeshStandardMaterial(Object.assign({ color: 0xffffff, vertexColors: true }, spec));
+  if (_envFallback) { m.envMap = _envFallback; }
+  return m;
+}
+
+const famStd = (name) => ({ fam: 1, key: 'F:' + name, f: () => stdMaterial(FAMILY[name]) });
+const _FAM = {};
+for (const name of Object.keys(FAMILY)) _FAM[name] = famStd(name);
+
+// Family descriptor factory: pick the family, carry the colour + a linear
+// gain (used by the emissive family to push colours past 1.0 for bloom).
+const F = (name, c, gain) => ({ fam: 1, key: _FAM[name].key, f: _FAM[name].f, col: hex(c), gain: gain || 1 });
+
+// Unlit emissive. A MeshBasicMaterial with the neon colour pre-multiplied by
+// its intensity reads the same as the old emissive standard material under
+// ACES + UnrealBloom, and collapses every glowing part of every token on the
+// map into one draw bucket.
+const _glowFam = { fam: 1, key: 'F:glow', tr: true, f: () => new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true }) };
+// Flat blended veil (the dark footprint under a base ring). Opacity is baked
+// into the family so it stays a single material.
+const VEIL_OPACITY = 0.55;
+const _veilFam = {
+  fam: 1, key: 'F:veil', tr: true,
+  f: () => new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: VEIL_OPACITY, depthWrite: false, side: DS })
+};
+// Additive bloom decals (ground pools, light cones). With SRC_ALPHA/ONE
+// blending, opacity and colour are interchangeable, so the per-instance
+// opacity folds into the vertex colour and the family stays single-material.
+const _bloomFam = (map) => ({
+  fam: 1, key: 'F:bloom|' + (map ? map.uuid : '-'), tr: true,
+  f: () => new THREE.MeshBasicMaterial({
+    color: 0xffffff, vertexColors: true, map, transparent: true, opacity: 1,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: DS
+  })
+});
 
 const Mat = {
-  // Matte-ish cloth / rubber / plastic
-  cloth: (c, rough = 0.92) => ({ k: `cl|${hex(c)}|${n(rough)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: rough, metalness: 0.02 }) }),
+  // Matte-ish cloth / rubber / plastic. Roughness buckets into the nearest
+  // family rather than minting a material per value.
+  cloth: (c, rough = 0.92) => F(rough >= 0.75 ? 'cloth' : rough >= 0.45 ? 'hide' : 'plate', c),
   // Skin: soft, slightly translucent-looking
-  skin: (c) => ({ k: `sk|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.72, metalness: 0.0 }) }),
+  skin: (c) => F('skin', c),
   // Worn leather / synthleather — the CP:RED jacket look
-  leather: (c) => ({ k: `le|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.50, metalness: 0.10, envMap: envTexture(), envMapIntensity: 0.55 }) }),
+  leather: (c) => F('hide', c),
   // Painted armour plate
-  plate: (c) => ({ k: `pl|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.40, metalness: 0.48, envMap: envTexture(), envMapIntensity: 0.9 }) }),
+  plate: (c) => F('plate', c),
   // Polished chrome — cyberware, rims, blades
-  chrome: (c = 0xd8e2ee) => ({ k: `ch|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.20, metalness: 1.0, envMap: envTexture(), envMapIntensity: 1.25 }) }),
+  chrome: (c = 0xd8e2ee) => F('chrome', c),
   // Dirty structural metal — props, frames, crates
-  metal: (c, rough = 0.55) => ({ k: `mt|${hex(c)}|${n(rough)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: rough, metalness: 0.62, envMap: envTexture(), envMapIntensity: 1.0 }) }),
+  metal: (c, rough = 0.55) => F(rough >= 0.78 ? 'grime' : 'metal', c),
   // Concrete / asphalt
-  rough: (c) => ({ k: `ro|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.98, metalness: 0.0 }) }),
+  rough: (c) => F('stone', c),
   // Tinted vehicle glass
-  glass: (c = 0x0a0e18) => ({ k: `gl|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.08, metalness: 0.85, emissive: 0x11293a, emissiveIntensity: 0.7, envMap: envTexture(), envMapIntensity: 1.1 }) }),
+  glass: (c = 0x0a0e18) => F('glass', c),
   // Emissive neon — the thing that actually sells the art direction
-  glow: (c, i = 2.4) => ({ k: `gw|${hex(c)}|${n(i)}`, tr: true, f: () => neonMaterial(hex(c), i) }),
+  glow: (c, i = 2.4) => Object.assign({ col: hex(c), gain: i + 0.28 }, _glowFam),
   // Unlit additive sprite-ish surfaces (underglow, ground bloom)
-  add: (c, op = 0.55, map = null) => ({
-    k: `ad|${hex(c)}|${n(op)}|${map ? map.uuid : '-'}`, tr: true,
-    f: () => new THREE.MeshBasicMaterial({ color: hex(c), map, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
-  }),
-  // Flat unlit with a texture (screens, signage, decals)
-  flat: (c, map = null, opts = {}) => ({
-    k: `fl|${hex(c)}|${map ? map.uuid : '-'}|${opts.side || 0}|${n(opts.opacity ?? 1)}`, tr: !!opts.transparent,
+  add: (c, op = 0.55, map = null) => Object.assign({ col: hex(c), gain: op }, _bloomFam(map)),
+  // Flat unlit. Untextured flats are a shared family; textured ones (screens,
+  // signage, decals) each own a material because the map cannot be shared.
+  flat: (c, map = null, opts = {}) => (map ? {
+    key: `fl|${hex(c)}|${map.uuid}|${opts.side || 0}|${n(opts.opacity ?? 1)}`, tr: !!opts.transparent,
     f: () => new THREE.MeshBasicMaterial({ color: hex(c), map, side: opts.side || THREE.FrontSide, transparent: !!opts.transparent, opacity: opts.opacity ?? 1, depthWrite: opts.depthWrite !== false, alphaTest: opts.alphaTest || 0 })
-  }),
+  } : Object.assign({ col: hex(c), gain: (opts.opacity ?? 1) / VEIL_OPACITY }, _veilFam)),
   // Two-sided cloth for coats/jackets built from open cylinders
-  coat: (c) => ({ k: `co|${hex(c)}`, f: () => new THREE.MeshStandardMaterial({ color: hex(c), roughness: 0.62, metalness: 0.08, side: THREE.DoubleSide }) }),
+  coat: (c) => F('hide', c),
   // Cutout material for chain-link etc.
   cutout: (c, map) => ({
-    k: `cu|${hex(c)}|${map.uuid}`,
-    f: () => new THREE.MeshStandardMaterial({ color: hex(c), map, alphaMap: map, alphaTest: 0.5, transparent: false, side: THREE.DoubleSide, roughness: 0.55, metalness: 0.55, envMap: envTexture(), envMapIntensity: 0.9 })
+    key: `cu|${hex(c)}|${map.uuid}`,
+    f: () => new THREE.MeshStandardMaterial({ color: hex(c), map, alphaMap: map, alphaTest: 0.5, transparent: false, side: DS, roughness: 0.55, metalness: 0.55, envMap: _envFallback || null, envMapIntensity: 0.9 })
   })
 };
+
+// ── shared material registry ───────────────────────────────────────
+// Keyed by descriptor key, refcounted. A token's dispose() releases its
+// handles; the material itself only dies when the last token holding it
+// goes away, which is what makes sharing safe.
+const _matReg = new Map();
+
+function acquireMat(md) {
+  let e = _matReg.get(md.key);
+  if (!e) {
+    const mat = md.f();
+    mat.userData.__tk = md.key;
+    e = { mat, refs: 0 };
+    _matReg.set(md.key, e);
+  }
+  e.refs++;
+  return e.mat;
+}
+
+function releaseMat(mat) {
+  if (!mat) return;
+  const key = mat.userData && mat.userData.__tk;
+  const e = key && _matReg.get(key);
+  if (!e) { try { mat.dispose(); } catch (err) { } return; }
+  if (--e.refs > 0) return;
+  _matReg.delete(key);
+  try { if (e.mat.userData.__ownMap && e.mat.map) e.mat.map.dispose(); } catch (err) { }
+  try { e.mat.dispose(); } catch (err) { }
+}
+
+/**
+ * A material the token owns outright (its name plate, its HP arc tint) but
+ * that should still be shared with any other token asking for exactly the
+ * same thing. `build` runs at most once per key.
+ */
+function acquireOwned(key, build) {
+  return acquireMat({ key, f: build });
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // 3. PROCEDURAL TEXTURES
@@ -320,13 +440,36 @@ const texTag = (color) => T(`tag|${hex(color)}`, () => {
 
 
 // ── Environment map ────────────────────────────────────────────────
-// Metals with nothing to reflect render black. The app's stage has no
-// scene.environment, so tokens carry their own: a tiny equirectangular
-// "night city" latlong that the renderer PMREM-filters on first use. It is
-// what makes chrome cyberware, rims and vehicle paint read as metal.
-let _envTex = null;
-function envTexture() {
-  if (_envTex) return _envTex;
+// Metals with nothing to reflect render black. core.js's createStage() now
+// PMREM-filters a shared "night city" probe into scene.environment, and every
+// MeshStandardMaterial picks that up for free — tokens no longer carry a
+// private copy, which also means the whole cast reacts to the stage rather
+// than to a texture baked into this module.
+//
+// The code below is a pure fallback for a host that mounts tokens in a bare
+// THREE.Scene with no environment at all: on the first token that reaches a
+// scene we look, and only if there is nothing to reflect do we build a local
+// equirect probe and hand it to the materials we own.
+let _envFallback = null;
+let _envChecked = false;
+
+function checkEnvironment(renderer, scene) {
+  if (_envChecked) return;
+  _envChecked = true;
+  if (!scene || scene.environment) return;   // shared probe present: nothing to do
+  const raw = buildFallbackEnv();
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    _envFallback = pmrem.fromEquirectangular(raw).texture;
+    pmrem.dispose(); raw.dispose();
+  } catch (e) { _envFallback = raw; }
+  _texCache.set('__env', _envFallback);
+  for (const e of _matReg.values()) {
+    if (e.mat.isMeshStandardMaterial && !e.mat.envMap) { e.mat.envMap = _envFallback; e.mat.needsUpdate = true; }
+  }
+}
+
+function buildFallbackEnv() {
   const { c, x } = cv(512, 256);
   const sky = x.createLinearGradient(0, 0, 0, 256);
   sky.addColorStop(0.00, '#0a1024');
@@ -357,16 +500,43 @@ function envTexture() {
   top.addColorStop(0, '#cfefff'); top.addColorStop(1, 'rgba(0,0,0,0)');
   x.fillStyle = top; x.fillRect(0, 0, 512, 120);
   x.globalAlpha = 1;
-  _envTex = new THREE.CanvasTexture(c);
-  _envTex.mapping = THREE.EquirectangularReflectionMapping;
-  _envTex.colorSpace = THREE.SRGBColorSpace;
-  _texCache.set('__env', _envTex);
-  return _envTex;
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // 4. PART LIST — collect primitives, merge by material, emit meshes
 // ═══════════════════════════════════════════════════════════════════
+
+const _paintCol = new THREE.Color();
+
+/**
+ * Bake a flat colour into a geometry's vertex colour attribute. Values are
+ * written in the renderer's working (linear) space, and may exceed 1 so the
+ * emissive family can drive bloom.
+ */
+function paint(g, colHex, gain) {
+  const count = g.attributes.position.count;
+  _paintCol.setHex(colHex >>> 0);
+  const r = _paintCol.r * gain, gg = _paintCol.g * gain, b = _paintCol.b * gain;
+  const arr = new Float32Array(count * 3);
+  for (let i = 0, o = 0; i < count; i++) { arr[o++] = r; arr[o++] = gg; arr[o++] = b; }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
+
+function mergeBucket(b) {
+  let geos = b.geos;
+  // mergeGeometries refuses to mix indexed and non-indexed sources.
+  if (geos.some(g => g.index === null) && geos.some(g => g.index !== null)) {
+    geos = geos.map(g => { if (g.index === null) return g; const nx = g.toNonIndexed(); g.dispose(); return nx; });
+  }
+  const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+  if (geos.length > 1) geos.forEach(g => g.dispose());
+  return merged;
+}
 
 function partList() {
   const buckets = new Map();
@@ -374,10 +544,14 @@ function partList() {
   return {
     // geo: shared cached BufferGeometry (never mutated), md: material descriptor
     add(geo, md, m) {
-      let b = buckets.get(md.k);
-      if (!b) { b = { md, geos: [] }; buckets.set(md.k, b); }
+      let b = buckets.get(md.key);
+      if (!b) { b = { md, geos: [] }; buckets.set(md.key, b); }
       const g = geo.clone();
       if (m) g.applyMatrix4(m);
+      // Family surfaces carry their colour in the mesh, not in a uniform, so
+      // parts that differ only by colour still collapse into one draw call
+      // and one globally shared material.
+      if (md.fam) paint(g, md.col, md.gain);
       b.geos.push(g);
       return this;
     },
@@ -387,15 +561,9 @@ function partList() {
     // Merge each bucket into one geometry -> one mesh -> one draw call.
     flush(parent, owned, { cast = true, receive = false } = {}) {
       for (const b of buckets.values()) {
-        let geos = b.geos;
-        // mergeGeometries refuses to mix indexed and non-indexed sources.
-        if (geos.some(g => g.index === null) && geos.some(g => g.index !== null)) {
-          geos = geos.map(g => { if (g.index === null) return g; const nx = g.toNonIndexed(); g.dispose(); return nx; });
-        }
-        const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
-        if (geos.length > 1) geos.forEach(g => g.dispose());
+        const merged = mergeBucket(b);
         if (!merged) continue;
-        const mat = b.md.f();
+        const mat = acquireMat(b.md);
         const mesh = new THREE.Mesh(merged, mat);
         mesh.castShadow = cast && !b.md.tr;
         mesh.receiveShadow = receive && !b.md.tr;
@@ -412,14 +580,9 @@ function partList() {
     // Instanced variant: one InstancedMesh per material, `places` transforms.
     flushInstanced(parent, owned, places, { cast = true, receive = false } = {}) {
       for (const b of buckets.values()) {
-        let geos = b.geos;
-        if (geos.some(g => g.index === null) && geos.some(g => g.index !== null)) {
-          geos = geos.map(g => { if (g.index === null) return g; const nx = g.toNonIndexed(); g.dispose(); return nx; });
-        }
-        const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
-        if (geos.length > 1) geos.forEach(g => g.dispose());
+        const merged = mergeBucket(b);
         if (!merged) continue;
-        const mat = b.md.f();
+        const mat = acquireMat(b.md);
         const im = new THREE.InstancedMesh(merged, mat, places.length);
         places.forEach((p, i) => im.setMatrixAt(i, p));
         im.instanceMatrix.needsUpdate = true;
@@ -444,8 +607,10 @@ function finalize(group, meta, owned, animators) {
   let disposed = false;
   group.dispose = function () {
     if (disposed) return; disposed = true;
+    // Geometry is per-token and freed outright; materials are shared and
+    // refcounted, so releaseMat only actually disposes the last holder's copy.
     owned.geos.forEach(g => { try { g.dispose(); } catch (e) { } });
-    owned.mats.forEach(m => { try { m.dispose(); } catch (e) { } });
+    owned.mats.forEach(m => { try { releaseMat(m); } catch (e) { } });
     owned.texs.forEach(t => { try { t.dispose(); } catch (e) { } });
     owned.geos.length = owned.mats.length = owned.texs.length = 0;
     animators.length = 0;
@@ -453,6 +618,18 @@ function finalize(group, meta, owned, animators) {
     group.clear();
   };
   group.update = function (t, dt) { for (let i = 0; i < animators.length; i++) animators[i](t, dt); };
+  // One-shot: the first token to actually reach a renderer tells us whether
+  // the host stage set scene.environment. If it did (createStage always does)
+  // this costs one no-op callback and nothing else; if it did not, we build a
+  // local probe so chrome and painted metal are not shaded black. (See §3.)
+  if (!_envChecked) {
+    let probe = null;
+    group.traverse(o => { if (!probe && o.isMesh) probe = o; });
+    if (probe) probe.onBeforeRender = function (renderer, scene) {
+      probe.onBeforeRender = function () { };
+      try { checkEnvironment(renderer, scene); } catch (e) { }
+    };
+  }
   return group;
 }
 
@@ -524,29 +701,36 @@ function buildBase(owned, animators, opt = {}) {
   }
   parts.flush(g, owned, { cast: false, receive: false });
 
-  // HP arc lives on its own mesh so it can be rebuilt cheaply on damage.
+  // HP arc lives on its own mesh so it can be rebuilt cheaply on damage. Its
+  // tint is baked into the arc's vertex colours, so it can ride the same
+  // shared emissive material as every other glowing thing on the map.
   let hpFrac = Math.max(0, Math.min(1, opt.hp ?? 1));
-  const hpMat = new THREE.MeshStandardMaterial({
-    color: hpTint(hpFrac), emissive: hpTint(hpFrac), emissiveIntensity: 0.85, roughness: 0.4, metalness: 0.1
-  });
+  const hpMat = acquireMat(_glowFam);
   owned.mats.push(hpMat);
   const hpMesh = new THREE.Mesh(hpArcGeo(radius, hpFrac, lw), hpMat);
   hpMesh.rotation.x = -Math.PI / 2; hpMesh.position.y = 0.011;
   hpMesh.renderOrder = 2;
+  hpMesh.visible = hpFrac > 0.001;
   g.add(hpMesh);
   // Track HP arc geometry so dispose() frees whichever one is current.
   const hpGeoRef = { g: hpMesh.geometry };
   owned.geos.push({ dispose: () => hpGeoRef.g.dispose() });
 
-  // Selection halo (hidden until asked for) + a slow pulse.
-  const selMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide });
-  owned.mats.push(selMat);
-  const selGeo = new THREE.RingGeometry(radius + lw * 4.0, radius + lw * 6.2, 64);
-  owned.geos.push(selGeo);
-  const sel = new THREE.Mesh(selGeo, selMat);
-  sel.rotation.x = -Math.PI / 2; sel.position.y = 0.016; sel.visible = false; sel.renderOrder = 3;
-  g.add(sel);
-  animators.push((t) => { if (sel.visible) selMat.opacity = 0.35 + Math.sin(t * 4) * 0.28; });
+  // Selection halo. Built on first use: an encounter has at most one or two
+  // selected tokens, and 30 idle halos is 30 materials nobody ever sees.
+  let sel = null, selMat = null;
+  function ensureSel() {
+    if (sel) return sel;
+    selMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide });
+    owned.mats.push(selMat);
+    const selGeo = new THREE.RingGeometry(radius + lw * 4.0, radius + lw * 6.2, 64);
+    owned.geos.push(selGeo);
+    sel = new THREE.Mesh(selGeo, selMat);
+    sel.rotation.x = -Math.PI / 2; sel.position.y = 0.016; sel.renderOrder = 3;
+    g.add(sel);
+    animators.push((t) => { if (sel.visible) selMat.opacity = 0.35 + Math.sin(t * 4) * 0.28; });
+    return sel;
+  }
 
   g.scale.set(ex, 1, ez);
 
@@ -558,11 +742,13 @@ function buildBase(owned, animators, opt = {}) {
       hpGeoRef.g.dispose();
       hpGeoRef.g = hpArcGeo(radius, hpFrac, lw);
       hpMesh.geometry = hpGeoRef.g;
-      const c = hpTint(hpFrac);
-      hpMat.color.setHex(c); hpMat.emissive.setHex(c);
       hpMesh.visible = hpFrac > 0.001;
     },
-    setSelected(on) { sel.visible = !!on; if (!on) selMat.opacity = 0; },
+    setSelected(on) {
+      if (!on && !sel) return;
+      ensureSel().visible = !!on;
+      if (!on) selMat.opacity = 0;
+    },
     setColor(c) { /* ownership colour is baked into the merged ring */ }
   };
 }
@@ -572,7 +758,12 @@ function hpArcGeo(radius, frac, lw) {
   const w = lw || Math.min(radius * 0.07, 0.05);
   const ri = radius + w * 1.1;
   // Start at the token's left and sweep forward so the bar grows toward +Z.
-  return new THREE.RingGeometry(ri, ri + w * 1.5, Math.max(6, Math.ceil(64 * f)), 1, Math.PI * 0.5, f * TAU);
+  const g = new THREE.RingGeometry(ri, ri + w * 1.5, Math.max(6, Math.ceil(64 * f)), 1, Math.PI * 0.5, f * TAU);
+  // Green -> gold -> orange -> red, baked in so the arc shares the global
+  // emissive material instead of owning a tinted one per token. Kept a touch
+  // under the ownership ring: the ring is the identity read, the arc is the
+  // status read, and a hot arc under bloom drowns both.
+  return paint(g, hpTint(frac), 1.05);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -593,57 +784,105 @@ function roundRect(x, rx, ry, w, h, r) {
 }
 
 /**
- * Floating name plate. Drawn at 4x the on-screen size with a heavy glow so
- * it stays legible at normal play distance / camera pitch.
+ * Floating name plate.
+ *
+ * Sized for legibility rather than decoration: the plate is short and wide so
+ * the name gets the maximum possible cap height for a given world width. At a
+ * typical play camera (25-ish units out) a sprite this size lands around
+ * 9 screen pixels of cap height, which is the floor for reading a name at a
+ * glance; the old 768x208 plate spent a third of its height on chrome and
+ * came in under 7.
+ *
+ * The sprite material (and the canvas texture it owns) is refcounted by
+ * content, so a squad of eight identical mooks pays for one label texture, not
+ * eight.
  */
 function buildLabel(owned, text, sub, color, opt = {}) {
-  const W = 768, H = 208;
-  const { c, x } = cv(W, H);
-  const col = CSS(color);
+  const W = 560, H = 150;
+  const name0 = String(text || '').toUpperCase();
+  const sub0 = String(sub || '');
+  const key = `lbl|${name0}|${sub0}|${hex(color)}`;
 
-  x.clearRect(0, 0, W, H);
-  // chamfered plate
-  x.fillStyle = 'rgba(5,7,14,0.86)';
-  roundRect(x, 6, 6, W - 12, H - 12, 14); x.fill();
-  x.strokeStyle = col; x.lineWidth = 4; x.globalAlpha = 0.95;
-  roundRect(x, 6, 6, W - 12, H - 12, 14); x.stroke();
-  // corner accents
-  x.globalAlpha = 1; x.lineWidth = 7;
-  [[24, 24, 1, 1], [W - 24, 24, -1, 1], [24, H - 24, 1, -1], [W - 24, H - 24, -1, -1]].forEach(([px, py, sx, sy]) => {
-    x.beginPath(); x.moveTo(px + 34 * sx, py); x.lineTo(px, py); x.lineTo(px, py + 30 * sy); x.stroke();
+  const mat = acquireOwned(key, () => {
+    const { c, x } = cv(W, H);
+    const col = CSS(color);
+    x.clearRect(0, 0, W, H);
+    // chamfered plate
+    x.fillStyle = 'rgba(4,6,12,0.90)';
+    roundRect(x, 4, 4, W - 8, H - 8, 10); x.fill();
+    x.strokeStyle = col; x.lineWidth = 3.5; x.globalAlpha = 0.95;
+    roundRect(x, 4, 4, W - 8, H - 8, 10); x.stroke();
+    // corner accents, kept tight so they cost the type nothing
+    x.globalAlpha = 1; x.lineWidth = 6;
+    [[14, 14, 1, 1], [W - 14, 14, -1, 1], [14, H - 14, 1, -1], [W - 14, H - 14, -1, -1]].forEach(([px, py, sx, sy]) => {
+      x.beginPath(); x.moveTo(px + 26 * sx, py); x.lineTo(px, py); x.lineTo(px, py + 22 * sy); x.stroke();
+    });
+    // left ownership bar
+    x.fillStyle = col; x.globalAlpha = 0.95; x.fillRect(20, 26, 9, H - 52);
+
+    x.globalAlpha = 1; x.textAlign = 'left'; x.textBaseline = 'alphabetic';
+    // Condense rather than truncate: "ADAM SMASHER" losing its last four
+    // letters is worse than the same name set two points smaller.
+    const fit = (text, px, min, font, maxW) => {
+      let size = px;
+      x.font = `${font(size)}`;
+      while (x.measureText(text).width > maxW && size > min) { size -= 2; x.font = font(size); }
+      let t = text;
+      while (x.measureText(t).width > maxW && t.length > 3) t = t.slice(0, -1);
+      return t;
+    };
+    // Kept just under the bloom threshold: pure white type on a 0.9-strength
+    // UnrealBloom turns a crowd of name plates into one white smear.
+    x.shadowColor = col; x.shadowBlur = 12;
+    x.fillStyle = '#dbe9f4';
+    const name = fit(name0, 80, 46, (s) => `bold ${s}px ${FONT_DISPLAY}`, W - 66);
+    x.fillText(name, 40, 88);
+    x.shadowBlur = 6;
+    x.fillStyle = col;
+    const s = fit(sub0, 40, 26, (v) => `bold ${v}px ${FONT_MONO}`, W - 66);
+    x.fillText(s, 42, 130);
+    x.shadowBlur = 0;
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: opt.depthTest !== false, sizeAttenuation: true });
+    m.userData.__ownMap = true;
+    return m;
   });
-  // left ownership bar
-  x.fillStyle = col; x.globalAlpha = 0.9; x.fillRect(20, 40, 8, H - 80);
-
-  x.globalAlpha = 1; x.textAlign = 'left'; x.textBaseline = 'alphabetic';
-  x.shadowColor = col; x.shadowBlur = 24;
-  x.fillStyle = '#eaf6ff';
-  x.font = `bold 72px ${FONT_DISPLAY}`;
-  let name = String(text || '').toUpperCase();
-  while (x.measureText(name).width > W - 90 && name.length > 3) name = name.slice(0, -1);
-  x.fillText(name, 44, 96);
-  x.shadowBlur = 10;
-  x.fillStyle = col;
-  x.font = `36px ${FONT_MONO}`;
-  let s = String(sub || '');
-  while (x.measureText(s).width > W - 90 && s.length > 3) s = s.slice(0, -1);
-  x.fillText(s, 46, 156);
-  x.shadowBlur = 0;
-
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  owned.texs.push(tex);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: opt.depthTest !== false, sizeAttenuation: true });
   owned.mats.push(mat);
+
   const sp = new THREE.Sprite(mat);
   const w = opt.width ?? 1.5;
-  sp.scale.set(w, w * (H / W), 1);
+  const h = w * (H / W);
+  sp.scale.set(w, h, 1);
   sp.position.y = opt.y ?? 2.25;
   sp.renderOrder = 10;
   sp.name = 'label';
+
+  // Hold a near-constant on-screen size as the GM zooms out, the way every
+  // shipping VTT does: a world-locked plate is either unreadable at table
+  // range or a billboard in close-up. Growth is capped at 1.7x so a distant
+  // 30-token brawl does not turn into a wall of overlapping plates, and the
+  // scale lives on the sprite, never on the (shared) material.
+  const _sz = new THREE.Vector2();
+  sp.onBeforeRender = function (renderer, scene, camera) {
+    if (!camera.isPerspectiveCamera) return;
+    renderer.getSize(_sz);
+    const d = camera.position.distanceTo(sp.getWorldPosition(_v));
+    const worldPerPixel = (2 * d * Math.tan(camera.fov * Math.PI / 360)) / Math.max(1, _sz.y);
+    const want = LABEL_TARGET_PX * worldPerPixel;                 // desired plate height
+    const k = Math.max(1, Math.min(1.7, want / h));
+    sp.scale.set(w * k, h * k, 1);
+  };
   return sp;
 }
+
+// Plate height the label tries to hold on screen, in CSS pixels. At this size
+// the name runs ~14 px of cap height — comfortably readable across a table on
+// a shared display, and still small enough that a packed grid of tokens is not
+// buried under its own furniture.
+const LABEL_TARGET_PX = 26;
 
 /**
  * Optional holo-plate that projects char.portrait above the token. The image
@@ -772,6 +1011,25 @@ function shade(c, amt) {
   return col.getHex();
 }
 
+const _hsl = { h: 0, s: 0, l: 0 };
+/**
+ * Raise a colour's lightness without washing it out.
+ *
+ * The cast used to disappear at play distance: authored mid-tones sat around
+ * 30% lightness, the stage runs one cool key over a near-black ground, and
+ * ACES then rolls the result down again — so a "grey-blue jacket" arrived on
+ * screen as an unlit silhouette and every role/armour/cyberware cue with it.
+ * Lifting in sRGB HSL (with a touch more saturation) keeps the hue relations
+ * the palettes were authored for and simply moves them into a band the tone
+ * mapper can still separate.
+ */
+function lift(c, amount, sat = 1.14) {
+  const col = new THREE.Color(hex(c));
+  col.getHSL(_hsl, THREE.SRGBColorSpace);
+  col.setHSL(_hsl.h, Math.min(1, _hsl.s * sat), Math.min(0.94, _hsl.l + amount), THREE.SRGBColorSpace);
+  return col.getHex();
+}
+
 // ── sheet → visual spec ────────────────────────────────────────────
 function weaponClass(w) {
   const s = `${(w && w.name) || ''} ${(w && w.damage) || ''}`;
@@ -820,12 +1078,14 @@ function readSheet(char) {
 
 function paletteFor(st, rand) {
   const S = ROLE_STYLE[st.role] || DEFAULT_STYLE;
-  const skin = pick(rand, SKIN);
+  const skin = lift(pick(rand, SKIN), 0.05, 1.05);
   const neonHair = rand() < (S.kit === 'rocker' ? 0.7 : S.kit === 'netrunner' ? 0.45 : 0.16);
-  const hairCol = neonHair ? pick(rand, HAIR_NEON) : pick(rand, HAIR_NATURAL);
-  const cloth = pick(rand, S.cloth);
-  const jacket = pick(rand, S.jacket);
-  const pants = pick(rand, S.cloth);
+  const hairCol = neonHair ? pick(rand, HAIR_NEON) : lift(pick(rand, HAIR_NATURAL), 0.06, 1.0);
+  // See lift(): the authored mid-tones are a full stop too dark once the
+  // stage's key + ACES have had their say, and role identity dies with them.
+  const cloth = lift(pick(rand, S.cloth), 0.15);
+  const jacket = lift(pick(rand, S.jacket), 0.13);
+  const pants = lift(pick(rand, S.cloth), 0.15);
   const accent = S.accent;
   return {
     accent,
@@ -1035,6 +1295,13 @@ function buildHumanoid(parts, P, st, rand, kit) {
       bone(parts, P.plateDark, E.clone().lerp(H, 0.12), E.clone().lerp(H, 0.72), 0.059);
     }
   }
+  // Role accent across the shoulder caps. From a 30-60 degree play camera the
+  // shoulders are the biggest surface you can actually see, so that is where
+  // role colour has to live if it is going to read at 25 metres — everything
+  // painted on the chest is edge-on and invisible from above.
+  for (const s of [-1, 1]) {
+    parts.add(Geo.box(0.125, 0.018, 0.085), P.glow, TRS(s * 0.176, 1.474, 0.004, 0, 0, -s * 0.22));
+  }
   wr.place(parts, P);
 
   if (st.weapon !== 'pistol' && st.weapon !== 'none') {
@@ -1080,7 +1347,40 @@ function buildHumanoid(parts, P, st, rand, kit) {
   if (cy.skin) {
     for (const s of [-1, 1]) parts.add(Geo.box(0.05, 0.028, 0.006), P.chromeDark, TRS(s * 0.055, 1.61, 0.078, 0, 0, s * 0.3));
   }
-  return { kit, hooded, helmet, midArmor, heavyArmor };
+  return { kit, hooded, helmet, midArmor, heavyArmor, wr };
+}
+
+// ── shadow proxy ───────────────────────────────────────────────────
+// A character merges down to ~7 meshes and ~8k triangles, and every one of
+// them used to be re-rasterised into the shadow map — 30 tokens meant a
+// second pass almost as expensive as the first, for a soft blob a few
+// centimetres across on the ground. Instead the detail meshes stop casting
+// and one ~400-triangle stand-in casts for them: the same limb chain, six
+// capsules and a head. It writes no colour and no depth, so it is invisible
+// in the beauty pass but still a shadow caster as far as three is concerned.
+const _shadowMd = {
+  key: 'shadowproxy',
+  f: () => new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false })
+};
+
+function buildShadowProxy(owned, ctx, st) {
+  const parts = partList();
+  const md = _shadowMd;
+  const wr = ctx.wr;
+  for (const s of [-1, 1]) {
+    const stride = s > 0 ? 0.055 : -0.045;
+    bone(parts, md, V(s * L.legX, L.hip, stride * 0.35), V(s * (L.legX + 0.012), L.knee, stride * 0.9), 0.095);
+    bone(parts, md, V(s * (L.legX + 0.012), L.knee, stride * 0.9), V(s * (L.legX + 0.006), L.ankle + 0.05, stride), 0.075);
+    const S0 = V(s * L.shoulderX, L.shoulderY, 0);
+    const H = (s > 0 ? wr.R : wr.L);
+    bone(parts, md, S0, H, 0.075);
+  }
+  parts.add(Geo.cap(0.165, 0.40, 3, 7), md, TRS(0, 1.19, -0.01, 0, 0, 0, 1, 1, 0.72));
+  parts.add(Geo.sph(0.112, 7, 5), md, TRS(0, L.headY, 0.004, 0, 0, 0, 1, 1.1, 1.05));
+  const holder = new THREE.Group();
+  holder.name = 'shadowproxy';
+  parts.flush(holder, owned, { cast: true, receive: false });
+  return holder;
 }
 
 function addHair(parts, P, rand, hooded, cy) {
@@ -1336,7 +1636,9 @@ export function buildCharacterToken(char = {}, opts = {}) {
   const parts = partList();
   const ctx = buildHumanoid(parts, P, st, rand, style.kit);
   applyRoleKit(parts, P, st, rand, ctx, animators, rig, owned);
-  parts.flush(rig, owned, { cast: opts.castShadow !== false, receive: false });
+  // Detail meshes never cast; a single low-poly stand-in does it for them.
+  parts.flush(rig, owned, { cast: false, receive: false });
+  if (opts.castShadow !== false) rig.add(buildShadowProxy(owned, ctx, st));
 
   // BODY drives build: width more than height, so a BODY 10 Solo reads as a
   // slab and a BODY 3 Netrunner reads as a wire without breaking the grid.
@@ -1358,7 +1660,7 @@ export function buildCharacterToken(char = {}, opts = {}) {
   if (opts.label !== false) {
     const sub = opts.sublabel ?? `${st.role.toUpperCase()}  ${st.hp}/${st.maxHp}${st.bodySP ? '  SP' + st.bodySP : ''}`;
     group.add(buildLabel(owned, char.name || 'UNKNOWN', sub, fcol, {
-      width: opts.labelWidth ?? 1.45, y: 1.8 * h + 0.42
+      width: opts.labelWidth ?? 1.3, y: 1.8 * h + 0.40
     }));
   }
   if (opts.portrait && st.portrait) {
@@ -1467,7 +1769,11 @@ function lookupVehicleData(name) {
   return null;
 }
 
-const VEH_PAINT = [0x3e4a5c, 0x5a3b48, 0x2d4a60, 0x5b543c, 0x74323a, 0x2f5a4c, 0x565d6c, 0x453458];
+// Vehicle paint. Same lesson as the character palettes: authored at showroom
+// mid-tones these render as grey boxes on a near-black street, so the paint
+// is lifted at pick time and only the trim stays dark.
+const VEH_PAINT = [0x3e4a5c, 0x5a3b48, 0x2d4a60, 0x5b543c, 0x74323a, 0x2f5a4c, 0x565d6c, 0x453458]
+  .map(c => lift(c, 0.16, 1.2));
 
 // Tyres: torus carcass + chromed rim + spokes + a brake-disc glow.
 function addWheel(parts, M, x, z, r, w) {
@@ -1610,17 +1916,11 @@ export function buildVehicleToken(spec = {}, opts = {}) {
     footprint = { x: V0.w * 0.5 + V0.wheel * 0.35, z: (b.front - b.back) * 0.5 };
   }
 
-  // underglow pool — cheap, and it is what makes these read as CP:RED
-  const ug = new THREE.Mesh(
-    Geo.circle(1, 28).clone(),
-    new THREE.MeshBasicMaterial({ map: texGlowDisc(), color: accent, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false })
-  );
-  owned.geos.push(ug.geometry); owned.mats.push(ug.material);
-  ug.rotation.x = -Math.PI / 2;
-  ug.position.y = 0.02;
-  ug.scale.set(footprint.x * 1.5, footprint.z * 1.25, 1);
-  ug.renderOrder = 1;
-  rig.add(ug);
+  // underglow pool — cheap, and it is what makes these read as CP:RED.
+  // Baked into the part list (footprint folded into the transform) so it
+  // shares the one additive-bloom material every token on the map uses.
+  parts.add(Geo.circle(1, 28), Mat.add(accent, 0.13, texGlowDisc()),
+    TRS(0, 0.02, 0, -Math.PI / 2, 0, 0, footprint.x * 1.5, footprint.z * 1.25, 1));
 
   parts.flush(rig, owned, { cast: opts.castShadow !== false, receive: false });
 
@@ -1719,22 +2019,18 @@ function buildAV(parts, M, rand, rig, owned, animators) {
     parts.add(Geo.box(0.10, 0.09, 2.6), M.trim, TRS(s * 0.95, 0.05, -0.10));
     for (const z of [0.85, -1.05]) parts.add(Geo.cyl(0.05, 0.05, BODY_Y - 0.18, 6), M.trim, TRS(s * 0.95, (BODY_Y - 0.10) / 2, z, 0, 0, s * 0.10));
   }
-  // lights: nav strobes + landing lights
+  // lights: nav strobes + landing lights. The strobes flash by toggling
+  // visibility rather than by animating a per-token emissive uniform — it is
+  // a harder, more aircraft-like blink and it costs no extra material.
   parts.add(Geo.box(0.9, 0.06, 0.06), M.head, TRS(0, BODY_Y - 0.30, 2.10));
-  const nav = [];
+  const navParts = partList();
   for (const [px, col] of [[-1.34, 0xff1744], [1.34, 0x69f0ae]]) {
-    const mm = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 4, roughness: 0.4 });
-    owned.mats.push(mm);
-    const gg = Geo.sph(0.075, 8, 6).clone();
-    owned.geos.push(gg);
-    const mesh = new THREE.Mesh(gg, mm);
-    mesh.position.set(px, BODY_Y + 0.30, -1.9);
-    rig.add(mesh); nav.push(mm);
+    navParts.add(Geo.sph(0.075, 8, 6), Mat.glow(col, 5.5), TRS(px, BODY_Y + 0.30, -1.9));
   }
-  animators.push((t) => {
-    const on = (t % 1.2) < 0.15 ? 6 : 0.4;
-    nav.forEach(m => { m.emissiveIntensity = on; });
-  });
+  const nav = new THREE.Group();
+  navParts.flush(nav, owned, { cast: false });
+  rig.add(nav);
+  animators.push((t) => { nav.visible = (t % 1.2) < 0.16; });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1755,8 +2051,8 @@ const propKey = (k) => String(k || '').toLowerCase().replace(/[^a-z]/g, '');
 const PROP_LOOKUP = PROP_KINDS.reduce((m, k) => { m[propKey(k)] = k; return m; }, {});
 
 const matMapped = (c, map, rough = 0.72, metal = 0.18) => ({
-  k: `mp|${hex(c)}|${map.uuid}|${n(rough)}|${n(metal)}`,
-  f: () => new THREE.MeshStandardMaterial({ color: hex(c), map, roughness: rough, metalness: metal, envMap: envTexture(), envMapIntensity: 0.8 })
+  key: `mp|${hex(c)}|${map.uuid}|${n(rough)}|${n(metal)}`,
+  f: () => new THREE.MeshStandardMaterial({ color: hex(c), map, roughness: rough, metalness: metal, envMap: _envFallback || null, envMapIntensity: 0.8 })
 });
 
 function propMats(accent) {
@@ -2364,16 +2660,28 @@ export async function loadLibraryToken(id, opts = {}) {
  * is only needed when tearing the whole 3D panel down for good.
  */
 export function disposeTokenCaches() {
-  _envTex = null;
+  _envFallback = null;
+  _envChecked = false;
   _geoCache.forEach(g => g.dispose());
   _geoCache.clear();
   _texCache.forEach(t => t.dispose());
   _texCache.clear();
+  _matReg.forEach(e => {
+    try { if (e.mat.userData.__ownMap && e.mat.map) e.mat.map.dispose(); } catch (err) { }
+    try { e.mat.dispose(); } catch (err) { }
+  });
+  _matReg.clear();
 }
 
-/** Cache stats — handy when profiling a busy encounter map. */
+/**
+ * Cache stats — handy when profiling a busy encounter map.
+ * `materials` is the live shared-material count and `matRefs` the number of
+ * token-held handles against them; the ratio is how well sharing is working.
+ */
 export function tokenCacheStats() {
-  return { geometries: _geoCache.size, textures: _texCache.size };
+  let refs = 0;
+  _matReg.forEach(e => { refs += e.refs; });
+  return { geometries: _geoCache.size, textures: _texCache.size, materials: _matReg.size, matRefs: refs };
 }
 
 /** Build a token straight off a roster entry, choosing the right builder. */

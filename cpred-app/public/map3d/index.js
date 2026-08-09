@@ -9,11 +9,43 @@ const root = document.getElementById('map3d-root');
 let active = null;      // { dispose() }
 let activeMode = null;
 let booted = false;
+// Bumped on every mount request. An in-flight mount whose token is stale must
+// throw its stage away instead of adopting it — see mount().
+let mountToken = 0;
+
+// ── Teardown ───────────────────────────────────────────────────────
+// renderer.dispose() frees three's own caches but does NOT release the GPU
+// context: the canvas keeps a live WebGL context until it is garbage
+// collected, which is not deterministic. Chrome hard-caps ~16 live contexts
+// per process, so without forceContextLoss() a GM who flips between the two
+// tabs during a session hits "Too many active WebGL contexts", then
+// getContext() starts returning null and the panel is dead until restart.
+// Verified in the packaged-shape Electron app: eviction warnings from the
+// 16th mount, null contexts by the ~27th.
+function releaseStage(stage) {
+  if (!stage) return;
+  try { stage.dispose?.(); } catch (e) { console.error('[map3d] dispose failed', e); }
+  const r = stage.renderer || (stage.stage && stage.stage.renderer);
+  if (!r) return;
+  try { r.forceContextLoss?.(); } catch (e) { /* already lost */ }
+  try {
+    const cv = r.domElement;
+    if (cv) { cv.width = 1; cv.height = 1; cv.remove(); }
+  } catch (e) { /* detached already */ }
+}
 
 function clearRoot() {
-  if (active && active.dispose) { try { active.dispose(); } catch (e) { console.error(e); } }
+  releaseStage(active);
   active = null;
+  // cast.js reads window.__map3d every 250ms while presenting; leaving a
+  // disposed stage there makes it mirror a dead camera to the table display.
+  window.__map3d = null;
   root.innerHTML = '';
+}
+
+function note(text, color = 'var(--dim)') {
+  root.innerHTML = `<div style="position:absolute;inset:0;display:flex;align-items:center;
+    justify-content:center;font-family:'Share Tech Mono',monospace;font-size:11px;color:${color}">${text}</div>`;
 }
 
 function fail(err) {
@@ -27,29 +59,63 @@ function fail(err) {
 }
 
 // Modes are loaded lazily so a failure in one never blocks the other.
+// The import error is re-surfaced rather than swallowed: silently substituting
+// the bootstrap scene turns "city.js has a syntax error" into "the product
+// shipped with a placeholder map and nobody noticed".
 const MODES = {
-  city:      () => import('./city.js').catch(() => ({ mount: bootstrapCity })),
-  encounter: () => import('./encounter.js').catch(() => ({ mount: bootstrapPlaceholder('Encounter Builder') }))
+  city: () => import('./city.js').catch(err => {
+    console.error('[map3d] city.js failed to load — falling back to the bootstrap scene', err);
+    return { mount: bootstrapCity, __fallback: err };
+  }),
+  encounter: () => import('./encounter.js').catch(err => {
+    console.error('[map3d] encounter.js failed to load — falling back to a placeholder', err);
+    return { mount: bootstrapPlaceholder('Encounter Builder'), __fallback: err };
+  })
 };
 
+let pendingMode = null;
+
 async function mount(mode) {
+  const token = ++mountToken;
   clearRoot();
   activeMode = mode;
+  pendingMode = mode;
+  note('// building ' + (mode === 'city' ? 'night city' : 'encounter map') + '...');
   try {
     const mod = await MODES[mode]();
-    active = await mod.mount(root, { THREE, createStage, THEMES, PALETTE, districts, neonMaterial });
+    if (token !== mountToken) return;              // superseded while importing
+    root.innerHTML = '';                            // drop the loading note
+    const stage = await mod.mount(root, { THREE, createStage, THEMES, PALETTE, districts, neonMaterial });
+    if (token !== mountToken) {
+      // A newer mount already ran clearRoot(). Adopting this stage now would
+      // leave two live renderers in the panel, so bin it immediately.
+      releaseStage(stage);
+      return;
+    }
+    active = stage;
+    pendingMode = null;
     // Debug/verification hook: lets tooling force a synchronous frame without
     // waiting on requestAnimationFrame (which is suspended in hidden windows).
     window.__map3d = { mode, stage: active, renderNow: () => active?.composer?.render() };
-  } catch (err) { fail(err); }
+  } catch (err) {
+    if (token !== mountToken) return;
+    activeMode = null; pendingMode = null;   // let the GM click the tab again to retry
+    fail(err);
+  }
 }
 
 window.map3dSwitch = function (mode) {
-  if (mode === activeMode) return;
+  if (!MODES[mode]) return;
   document.getElementById('map3d-tab-city').classList.toggle('active', mode === 'city');
   document.getElementById('map3d-tab-enc').classList.toggle('active', mode === 'encounter');
+  if (mode === pendingMode) return;            // this mount is already building
+  if (mode === activeMode && active) return;   // already showing a live stage
   mount(mode);
 };
+
+// A tab left mid-session keeps a WebGL context and a rAF loop alive for the
+// whole app lifetime. Release it when the window goes away.
+addEventListener('pagehide', clearRoot);
 
 // Only build the scene once the panel is actually visible — starting a
 // WebGL context in a display:none container gives a 0x0 canvas.
