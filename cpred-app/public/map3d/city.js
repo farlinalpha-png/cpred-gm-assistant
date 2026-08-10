@@ -11,6 +11,7 @@ const F = () => (typeof NC_FACTIONS !== 'undefined' ? NC_FACTIONS : []);
 const LAYERS = () => (typeof NC_LAYERS !== 'undefined' ? NC_LAYERS : {});
 const MAPMETA = () => (typeof NC_MAP !== 'undefined' ? NC_MAP
   : { image: 'assets/nightcity-map.jpg', worldW: 100, worldH: 148.394 });
+const POLYS = () => (typeof NC_DISTRICT_POLYS !== 'undefined' ? NC_DISTRICT_POLYS : {});
 
 const LS_KEY = 'cpred_map3d_city_prefs';
 
@@ -38,22 +39,32 @@ export function mount(container, ctx) {
 
   // Height that fits the whole plan in view for the stage's 50° vertical FOV,
   // with a small margin. Recomputed on resize via fitHeight().
-  const fitH = () => {
+  const fitHeightFor = (w, d, margin = 1.06) => {
     const aspect = (container.clientWidth || 1) / (container.clientHeight || 1);
     const vFov = 50 * Math.PI / 180;
-    const byH = (H / 2) / Math.tan(vFov / 2);
-    const byW = (W / 2) / (Math.tan(vFov / 2) * aspect);
-    return Math.max(byH, byW) * 1.06;
+    const byD = (d / 2) / Math.tan(vFov / 2);
+    const byW = (w / 2) / (Math.tan(vFov / 2) * aspect);
+    return Math.max(12, Math.max(byD, byW) * margin);
   };
+  const fitH = () => fitHeightFor(W, H);
 
   const stage = createStage(container, {
     theme: THEMES.street,
     cameraPos: [W / 2, H * 0.95, H / 2 + 0.01],   // straight down, like opening a map
     target: [W / 2, 0, H / 2],
-    shadowCenter: [W / 2, 0, H / 2], shadowRadius: Math.max(W, H) * 0.7,
-    ambient: 0.9,            // the map art is the lighting; keep it flat and legible
     exposure: MODES[prefs.mode]?.exposure ?? 1.15,
-    environment: false
+    environment: false,
+    // Every material in this mode is MeshBasicMaterial: the map art *is* the
+    // lighting, so the rig contributes nothing and its 2048² shadow map was
+    // being re-rendered every frame without changing a single pixel.
+    unlit: true,
+    // The glow here is a soft wash over a flat map, not rim light on geometry,
+    // so a quarter-size bloom chain is indistinguishable and much cheaper.
+    bloomScale: 0.5,
+    // Nothing in this mode animates by itself. Redraw when the GM moves the
+    // camera or changes what is shown, and leave the GPU alone the rest of
+    // the time — this panel is open for the length of a session.
+    onDemand: true
   });
   const { scene, camera, controls, renderer } = stage;
   scene.fog = null;                       // fog hides the map edges — not wanted here
@@ -82,14 +93,78 @@ export function mount(container, ctx) {
 
   loader.load(meta.image, tex => {
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy());
+    // The plan is viewed near-perpendicular, where anisotropic filtering buys
+    // almost nothing but costs real fill rate on a 25-megapixel texture.
+    tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
     tex.generateMipmaps = true;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     groundMat.map = tex;
     groundMat.color.setHex(MODES[prefs.mode]?.tint ?? 0xffffff);
     groundMat.needsUpdate = true;
     track(tex);
+    backdropSource = tex.image;
+    drawBackdrop();
   }, undefined, err => console.error('[city] map texture failed', err));
+
+  // ── Backdrop ─────────────────────────────────────────────────────
+  // The plan is half again as tall as it is wide, so on a wide panel it can
+  // only ever fill the middle and the rest was flat black bars. Fill the frame
+  // with a heavily blurred, darkened copy of the map instead and vignette it:
+  // it reads as a lightbox the map is sitting on rather than as dead space.
+  // Redrawn at the panel's own aspect, since three stretches a texture
+  // background across the viewport without any fit of its own.
+  const bdCanvas = document.createElement('canvas');
+  const bdTex = track(new THREE.CanvasTexture(bdCanvas));
+  bdTex.colorSpace = THREE.SRGBColorSpace;
+  bdTex.minFilter = bdTex.magFilter = THREE.LinearFilter;
+  bdTex.generateMipmaps = false;
+  let backdropSource = null;
+  let backdropTint = MODES[prefs.mode]?.ink || '#00e5ff';
+
+  function drawBackdrop() {
+    const cw = container.clientWidth || 1, ch = container.clientHeight || 1;
+    const bw = 512, bh = Math.max(1, Math.round(512 * ch / cw));
+    bdCanvas.width = bw; bdCanvas.height = bh;
+    const g = bdCanvas.getContext('2d');
+    const tint = backdropTint;
+
+    g.fillStyle = '#05060c';
+    g.fillRect(0, 0, bw, bh);
+    if (backdropSource) {
+      // Cover-fit, then pushed well in: a plain cover shows the map's own dead
+      // margins, which blur to the same near-black as the bars this replaces.
+      // Zooming to the city core gives the backdrop something to be made of.
+      const s = Math.max(bw / backdropSource.width, bh / backdropSource.height) * 2.6;
+      const dw = backdropSource.width * s, dh = backdropSource.height * s;
+      g.save();
+      g.filter = 'blur(14px) saturate(0.8)';
+      g.drawImage(backdropSource, (bw - dw) / 2, (bh - dh) / 2, dw, dh);
+      g.restore();
+    }
+    // knock it back so the map itself stays the brightest thing on screen
+    g.fillStyle = 'rgba(5,6,12,0.72)';
+    g.fillRect(0, 0, bw, bh);
+    // a breath of the active colour mode, then a vignette to centre the eye
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    const glow = g.createRadialGradient(bw / 2, bh / 2, 0, bw / 2, bh / 2, Math.max(bw, bh) * 0.6);
+    glow.addColorStop(0, hexToRgba(tint, 0.10));
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = glow; g.fillRect(0, 0, bw, bh);
+    g.restore();
+    const vig = g.createRadialGradient(bw / 2, bh / 2, Math.min(bw, bh) * 0.25,
+      bw / 2, bh / 2, Math.max(bw, bh) * 0.78);
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(0,0,0,0.62)');
+    g.fillStyle = vig; g.fillRect(0, 0, bw, bh);
+
+    bdTex.needsUpdate = true;
+    scene.background = bdTex;
+    stage.requestRender();
+  }
+  drawBackdrop();
+  const bdObserver = new ResizeObserver(() => drawBackdrop());
+  bdObserver.observe(container);
 
   // ── Overlay groups ───────────────────────────────────────────────
   const gDistrict = new THREE.Group(); scene.add(gDistrict);   // zone / threat / faction tints
@@ -99,23 +174,76 @@ export function mount(container, ctx) {
   const districts = D();
   const factions = F();
 
-  // District discs, sized from the pin cluster. Used by every overlay.
-  // Overlays are rings, not filled blobs: a filled disc at any readable
-  // opacity drowns the map art underneath, which is the whole point here.
-  const discGeo = track(new THREE.RingGeometry(0.955, 1, 72));
-  const discs = new Map();
+  // ── District overlays ────────────────────────────────────────────
+  // Real boundaries, traced from the map's own red dotted borders and the
+  // shoreline (see NC_DISTRICT_POLYS in mapdata.js). Each district gets a
+  // low-opacity fill plus a bright edge ribbon: the fill alone at any
+  // readable opacity drowns the map art, and the edge alone reads as a
+  // sketch rather than a zone.
+  const polyData = POLYS();
+  const overlays = new Map();       // code -> { fill, edge, fillMat, edgeMat, rings, bbox }
+
   districts.forEach(d => {
-    if (!d.anchor) return;
-    const r = Math.max(d.anchor.rx, d.anchor.rz) * 1.05 + 1;
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true,
-      opacity: 0.0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
-    const m = new THREE.Mesh(discGeo, mat);
-    m.rotation.x = -Math.PI / 2;
-    m.position.set(d.anchor.x, 0.05, d.anchor.z);
-    m.scale.setScalar(r);
-    m.userData = { code: d.code };
-    gDistrict.add(m); discs.set(d.code, m); track(mat);
+    const shapes = polyData[d.code];
+    const built = shapes && shapes.length ? buildPolyOverlay(shapes) : buildDiscOverlay(d);
+    if (!built) return;
+    gDistrict.add(built.fill, built.edge);
+    built.fill.userData = built.edge.userData = { code: d.code };
+    overlays.set(d.code, built);
+    track(built.fill.geometry); track(built.edge.geometry);
+    track(built.fillMat); track(built.edgeMat);
   });
+
+  // Rings arrive as normalised (u,v) on the map image; the ground plane puts
+  // (u,v) at world (u*W, 0, v*H), so that is the only conversion needed.
+  function toWorld(ring) { return ring.map(([u, v]) => [u * W, v * H]); }
+
+  function buildPolyOverlay(shapes) {
+    const rings = [];
+    const geoShapes = shapes.map(sh => {
+      const outer = toWorld(sh.o);
+      rings.push(outer);
+      // ShapeGeometry lives in XY and the mesh is laid flat by a -90° X
+      // rotation, which sends local +y to world -z: hence the negated v.
+      const shape = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)));
+      (sh.h || []).forEach(h => {
+        const hole = toWorld(h);
+        rings.push(hole);
+        shape.holes.push(new THREE.Path(hole.map(([x, z]) => new THREE.Vector2(x, -z))));
+      });
+      return shape;
+    });
+
+    const fillMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true,
+      opacity: 0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    const fill = new THREE.Mesh(new THREE.ShapeGeometry(geoShapes), fillMat);
+    fill.rotation.x = -Math.PI / 2;
+    fill.position.y = 0.04;
+    fill.renderOrder = 1;
+
+    const edgeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true,
+      opacity: 0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    const edge = new THREE.Mesh(ribbonGeometry(rings, EDGE_HALF_WIDTH), edgeMat);
+    edge.position.y = 0.06;
+    edge.renderOrder = 2;
+
+    return { fill, edge, fillMat, edgeMat, rings, bbox: ringsBBox(rings) };
+  }
+
+  // Fallback for any district the tracer could not resolve: a circle around
+  // the pin cluster, in the same shape as the traced data so it takes the
+  // identical path. Better that than a district that silently stops
+  // responding to the overlay switch.
+  function buildDiscOverlay(d) {
+    if (!d.anchor) return null;
+    const r = Math.max(d.anchor.rx, d.anchor.rz) * 1.05 + 1;
+    const o = [];
+    for (let i = 0; i < 48; i++) {
+      const a = i / 48 * Math.PI * 2;
+      o.push([(d.anchor.x + Math.cos(a) * r) / W, (d.anchor.z + Math.sin(a) * r) / H]);
+    }
+    return buildPolyOverlay([{ o }]);
+  }
 
   // Location pins — one instanced mesh, coloured per category.
   const located = districts.flatMap(d => d.locations.filter(l => l.x !== undefined)
@@ -149,10 +277,16 @@ export function mount(container, ctx) {
   layoutPins();
   gPins.add(pins);
 
-  // Selection ring
-  const ringMat = track(new THREE.MeshBasicMaterial({ color: PALETTE.neon, transparent: true, opacity: 0.9 }));
+  // Marker ring for a selected location. A selected *district* is picked out by
+  // its own traced border going solid instead, which is far more legible than a
+  // circle sitting somewhere near the middle of it. Neither pulses: a blinking
+  // highlight would mean redrawing the whole panel forever to animate it, and
+  // on a map a steady bright edge marks the selection perfectly well.
+  const ringMat = track(new THREE.MeshBasicMaterial({ color: PALETTE.neon, transparent: true,
+    opacity: 0.9, depthWrite: false, toneMapped: false }));
   const ring = new THREE.Mesh(track(new THREE.RingGeometry(0.94, 1, 64)), ringMat);
   ring.rotation.x = -Math.PI / 2; ring.visible = false;
+  ring.renderOrder = 3;
   gSelect.add(ring);
 
   // ── UI ───────────────────────────────────────────────────────────
@@ -174,31 +308,47 @@ export function mount(container, ctx) {
     savePrefs();
   }
 
+  // Fill opacity is deliberately low. Blending happens in linear space before
+  // tone mapping, so over near-black map art a nominal 15% of a saturated neon
+  // already lands around 45% on screen and swallows the streets underneath.
+  // Weight is carried by the edge instead, which stays near-opaque.
+  const FILL = { faction: 0.20, factionDim: 0.085, threatBase: 0.045, threatStep: 0.03, zone: 0.10 };
+
   function paintDistricts() {
     const off = prefs.off || {};
     districts.forEach(d => {
-      const m = discs.get(d.code);
-      if (!m) return;
+      const ov = overlays.get(d.code);
+      if (!ov) return;
       let col = null, op = 0;
       if (state.overlay === 'factions') {
         if (state.faction) {
           const f = factions.find(x => x.name === state.faction);
-          if (f && f.districts.includes(d.code)) { col = new THREE.Color(f.color); op = 0.95; }
+          if (f && f.districts.includes(d.code)) { col = new THREE.Color(f.color); op = FILL.faction; }
         } else {
           const first = d.gangs[0] && factions.find(x => x.name === d.gangs[0]);
-          if (first) { col = new THREE.Color(first.color); op = 0.4; }
+          if (first) { col = new THREE.Color(first.color); op = FILL.factionDim; }
         }
       } else if (state.overlay === 'threat') {
-        if (!off.threat) { col = new THREE.Color(THREAT_COLOR[d.threat] ?? 0xffffff); op = 0.25 + d.threat * 0.12; }
+        if (!off.threat) {
+          col = new THREE.Color(THREAT_COLOR[d.threat] ?? 0xffffff);
+          op = FILL.threatBase + d.threat * FILL.threatStep;
+        }
       } else if (state.overlay === 'zones') {
         const z = CAT_META[d.zone];
-        if (z && !off[d.zone]) { col = new THREE.Color(z.color); op = 0.5; }
+        if (z && !off[d.zone]) { col = new THREE.Color(z.color); op = FILL.zone; }
       }
-      // the selected district always reads strongest
-      if (state.selected === d.code && col) op = Math.min(1, op + 0.4);
-      if (col) { m.material.color.copy(col); m.material.opacity = op; }
-      else m.material.opacity = 0;
+      const on = !!col;
+      ov.fill.visible = on;
+      ov.edge.visible = on;
+      if (!on) return;
+      ov.fillMat.color.copy(col);
+      ov.edgeMat.color.copy(col);
+      // The selected district reads strongest: heavier fill, solid edge.
+      const sel = state.selected === d.code;
+      ov.fillMat.opacity = sel ? Math.min(0.34, op + 0.10) : op;
+      ov.edgeMat.opacity = sel ? 1 : 0.72;
     });
+    stage.requestRender();
   }
 
   // ── Interaction ──────────────────────────────────────────────────
@@ -213,15 +363,24 @@ export function mount(container, ctx) {
     if (hitPin && pinVisible[hitPin.instanceId]) return { kind: 'loc', loc: located[hitPin.instanceId] };
     const hitGround = ray.intersectObject(ground, false)[0];
     if (!hitGround) return null;
-    const p = hitGround.point;
-    let best = null, bestD = Infinity;
-    districts.forEach(d => {
-      if (!d.anchor) return;
-      const dist = Math.hypot(p.x - d.anchor.x, p.z - d.anchor.z);
-      const reach = Math.max(d.anchor.rx, d.anchor.rz) * 1.1 + 1.5;
-      if (dist < reach && dist < bestD) { bestD = dist; best = d; }
-    });
-    return best ? { kind: 'district', d: best } : null;
+    const d = districtAt(hitGround.point.x, hitGround.point.z);
+    return d ? { kind: 'district', d } : null;
+  }
+
+  // Point-in-polygon against the traced borders. Holes fall out for free:
+  // a point inside Charter Hill's Exec Zone crosses two rings, so the
+  // even-odd test puts it outside Charter Hill — which is correct.
+  function districtAt(x, z) {
+    for (const d of districts) {
+      const ov = overlays.get(d.code);
+      if (!ov) continue;
+      const b = ov.bbox;
+      if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) continue;
+      let inside = false;
+      for (const r of ov.rings) if (pointInRing(x, z, r)) inside = !inside;
+      if (inside) return d;
+    }
+    return null;
   }
 
   let hoverTimer = 0;
@@ -257,15 +416,24 @@ export function mount(container, ctx) {
 
   function selectDistrict(d) {
     state.selected = d.code;
-    if (d.anchor) {
-      ring.visible = true;
-      ring.position.set(d.anchor.x, 0.12, d.anchor.z);
-      ring.scale.setScalar(Math.max(d.anchor.rx, d.anchor.rz) * 1.12 + 1.2);
+    ring.visible = false;
+    const ov = overlays.get(d.code);
+    if (ov) {
+      // Frame the district's real extent rather than a guessed radius, so a
+      // long thin district like the Port fills the view the same as a blocky one.
+      const b = ov.bbox;
+      flyTo(b.cx, b.cz, fitHeightFor(b.w, b.d, 1.35), true);
+    } else if (d.anchor) {
       flyTo(d.anchor.x, d.anchor.z, Math.max(d.anchor.rx, d.anchor.rz) * 5 + 22);
     }
+    paintDistricts();
     ui.showDistrict(d);
   }
   function showLocation(l) {
+    ring.visible = true;
+    ring.position.set(l.x, 0.14, l.z);
+    ring.scale.setScalar(2.2);
+    stage.requestRender();
     ui.showLocation(l);
     flyTo(l.x, l.z, 16);
   }
@@ -289,9 +457,8 @@ export function mount(container, ctx) {
       camera.position.lerpVectors(tween.from, tween.to, e);
       controls.target.lerpVectors(tween.fromT, tween.toT, e);
       if (tween.t >= 1) tween = null;
+      stage.requestRender();
     }
-    const t = performance.now() * 0.002;
-    ringMat.opacity = 0.55 + Math.sin(t * 2) * 0.3;
   });
 
   // ── UI construction ──────────────────────────────────────────────
@@ -370,7 +537,8 @@ export function mount(container, ctx) {
     const reset = el('button', 'nc-mini'); reset.textContent = 'Reset view';
     allOn.onclick = () => { prefs.off = {}; syncBoxes(); applyLayers(); };
     allOff.onclick = () => { prefs.off = {}; Object.keys(CAT_META).forEach(k => prefs.off[k] = true); syncBoxes(); applyLayers(); };
-    reset.onclick = () => { ring.visible = false; state.selected = null; panel.classList.remove('open'); fitAll(); };
+    reset.onclick = () => { ring.visible = false; state.selected = null; paintDistricts();
+      panel.classList.remove('open'); fitAll(); };
     foot.append(cnt, allOn, allOff, reset);
     side.appendChild(foot);
 
@@ -482,6 +650,8 @@ export function mount(container, ctx) {
     renderer.toneMappingExposure = m.exposure;
     stage.bloom.strength = m.bloom;
     ui.side.querySelectorAll('.nc-mode').forEach(b => b.classList.toggle('on', b.dataset.mode === k));
+    backdropTint = m.ink;
+    drawBackdrop();
     savePrefs();
   }
 
@@ -502,6 +672,7 @@ export function mount(container, ctx) {
 
   const origDispose = stage.dispose.bind(stage);
   stage.dispose = () => {
+    bdObserver.disconnect();
     renderer.domElement.removeEventListener('pointermove', onMove);
     renderer.domElement.removeEventListener('pointerdown', onDown);
     renderer.domElement.removeEventListener('pointerup', onUp);
@@ -514,9 +685,78 @@ export function mount(container, ctx) {
   return stage;
 }
 
+// ── polygon helpers ────────────────────────────────────────────────
+// Half-width of a district edge, in world units. GL line width is capped at
+// 1px on every desktop driver, so the border is a flat ribbon instead: it
+// keeps a constant weight on the map at any zoom, which is what makes the
+// overlay read as cartography rather than as a wireframe.
+const EDGE_HALF_WIDTH = 0.16;
+
+// Closed quad strip around each ring, laid flat in XZ at y=0.
+function ribbonGeometry(rings, hw) {
+  const pos = [], idx = [];
+  rings.forEach(pts => {
+    const n = pts.length;
+    if (n < 3) return;
+    const base = pos.length / 3;
+    for (let i = 0; i < n; i++) {
+      const p = pts[i], a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n];
+      const inN = segNormal(a, p), outN = segNormal(p, b);
+      let nx = inN[0] + outN[0], nz = inN[1] + outN[1];
+      const len = Math.hypot(nx, nz);
+      if (len < 1e-6) { nx = outN[0]; nz = outN[1]; }
+      else { nx /= len; nz /= len; }
+      // Miter length grows as 1/cos(half-angle); clamp it so a hairpin in the
+      // traced border does not fire a spike across the district.
+      const cos = Math.max(0.3, nx * outN[0] + nz * outN[1]);
+      const m = Math.min(2.5, 1 / cos) * hw;
+      pos.push(p[0] + nx * m, 0, p[1] + nz * m);
+      pos.push(p[0] - nx * m, 0, p[1] - nz * m);
+    }
+    for (let i = 0; i < n; i++) {
+      const a = base + i * 2, b = a + 1;
+      const c = base + ((i + 1) % n) * 2, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+function segNormal(a, b) {
+  const dx = b[0] - a[0], dz = b[1] - a[1];
+  const l = Math.hypot(dx, dz) || 1;
+  return [-dz / l, dx / l];
+}
+
+function ringsBBox(rings) {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  rings.forEach(r => r.forEach(([x, z]) => {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }));
+  return { x0, x1, z0, z1, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2,
+    w: x1 - x0, d: z1 - z0 };
+}
+
+function pointInRing(x, z, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, zi] = ring[i], [xj, zj] = ring[j];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 // ── helpers ────────────────────────────────────────────────────────
 function el(tag, cls) { const n = document.createElement(tag); if (cls) n.className = cls; return n; }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function hexToRgba(hex, a) {
+  const n = parseInt(String(hex).replace('#', ''), 16) || 0;
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
 function hex(n) { return '#' + (n >>> 0).toString(16).padStart(6, '0').slice(-6); }
 
 function uiCSS() {

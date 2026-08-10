@@ -53,9 +53,14 @@ export function createStage(container, opts = {}) {
   const camera = new THREE.PerspectiveCamera(opts.fov || 50, 1, 0.1, 2000);
   camera.position.set(...(opts.cameraPos || [60, 70, 90]));
 
+  // A stage whose materials are all MeshBasicMaterial gains nothing from the
+  // lighting rig, and the shadow map it drives is re-rendered every frame for
+  // no visible result. The city map is exactly that case.
+  const unlit = opts.unlit === true;
+
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !unlit;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = opts.exposure ?? 1.0;
@@ -72,28 +77,30 @@ export function createStage(container, opts = {}) {
   if (opts.target) controls.target.set(...opts.target);
 
   // Lighting rig: cool key, warm neon fill, subtle ambient so nothing is pure black
-  scene.add(new THREE.AmbientLight(0xffffff, opts.ambient ?? 0.28));
   const key = new THREE.DirectionalLight(theme.key, 1.15);
-  // The shadow frustum must be centred on whatever the mode actually builds.
-  // The city sits around (58,50), not the origin, so default to the camera
-  // target and let a mode override the span.
-  const sc = opts.shadowCenter || opts.target || [0, 0, 0];
-  const sr = opts.shadowRadius ?? 120;
-  key.position.set(sc[0] + 60, sc[1] + 110, sc[2] + 40);
-  key.target.position.set(sc[0], sc[1], sc[2]);
-  scene.add(key.target);
-  key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  key.shadow.camera.near = 1; key.shadow.camera.far = 400 + sr;
-  key.shadow.camera.left = -sr; key.shadow.camera.right = sr;
-  key.shadow.camera.top = sr; key.shadow.camera.bottom = -sr;
-  key.shadow.bias = -0.0004;
-  key.shadow.camera.updateProjectionMatrix();
-  scene.add(key);
   const fill = new THREE.DirectionalLight(theme.fill, 0.5);
-  fill.position.set(-70, 40, -60);
-  scene.add(fill);
-  scene.add(new THREE.HemisphereLight(theme.key, theme.ground, 0.35));
+  if (!unlit) {
+    scene.add(new THREE.AmbientLight(0xffffff, opts.ambient ?? 0.28));
+    // The shadow frustum must be centred on whatever the mode actually builds.
+    // The city sits around (58,50), not the origin, so default to the camera
+    // target and let a mode override the span.
+    const sc = opts.shadowCenter || opts.target || [0, 0, 0];
+    const sr = opts.shadowRadius ?? 120;
+    key.position.set(sc[0] + 60, sc[1] + 110, sc[2] + 40);
+    key.target.position.set(sc[0], sc[1], sc[2]);
+    scene.add(key.target);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.near = 1; key.shadow.camera.far = 400 + sr;
+    key.shadow.camera.left = -sr; key.shadow.camera.right = sr;
+    key.shadow.camera.top = sr; key.shadow.camera.bottom = -sr;
+    key.shadow.bias = -0.0004;
+    key.shadow.camera.updateProjectionMatrix();
+    scene.add(key);
+    fill.position.set(-70, 40, -60);
+    scene.add(fill);
+    scene.add(new THREE.HemisphereLight(theme.key, theme.ground, 0.35));
+  }
 
   // Bloom is what sells the neon. Keep strength theme-driven.
   const composer = new EffectComposer(renderer);
@@ -102,14 +109,33 @@ export function createStage(container, opts = {}) {
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
-  function resize() {
+  // The bloom chain is the most expensive thing on screen — five downsample
+  // and blur passes over the whole frame. A mode whose glow is soft anyway can
+  // run it at a fraction of the frame size for the same look at a fraction of
+  // the fill rate. UnrealBloomPass halves again internally.
+  const bloomScale = opts.bloomScale ?? 1;
+
+  // Render-on-demand. A mode with nothing moving in it — a map you are reading
+  // rather than an animated scene — has no reason to redraw 60 times a second,
+  // and this panel stays open for a whole session on laptops that need the GPU
+  // for other things. OrbitControls.update() reports whether the camera
+  // actually changed (it keeps returning true while damping settles); anything
+  // else that changes a pixel calls requestRender().
+  const onDemand = opts.onDemand === true;
+  let dirty = true;
+  const requestRender = () => { dirty = true; };
+
+  function applyViewportSize() {
     const w = container.clientWidth || 1, h = container.clientHeight || 1;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
     composer.setSize(w, h);
+    // after composer.setSize, which resets the pass to the full frame size
+    bloom.setSize(Math.max(2, w * bloomScale), Math.max(2, h * bloomScale));
     bloom.resolution.set(w, h);
   }
+  const resize = () => { applyViewportSize(); dirty = true; };
   resize();
   const ro = new ResizeObserver(resize);
   ro.observe(container);
@@ -120,17 +146,17 @@ export function createStage(container, opts = {}) {
     if (!running) return;
     requestAnimationFrame(loop);
     const dt = clock.getDelta();
-    controls.update();
+    if (controls.update()) dirty = true;
     if (onFrame) onFrame(dt, clock.elapsedTime);
-    composer.render();
+    if (!onDemand || dirty) { dirty = false; composer.render(); }
   })();
 
   return {
-    scene, camera, renderer, controls, composer, bloom, resize,
+    scene, camera, renderer, controls, composer, bloom, resize, requestRender,
     setFrame(fn) { onFrame = fn; },
     setTheme(t) {
       scene.background = new THREE.Color(t.ground);
-      scene.fog.color.set(t.ground); scene.fog.near = t.fogNear; scene.fog.far = t.fogFar;
+      if (scene.fog) { scene.fog.color.set(t.ground); scene.fog.near = t.fogNear; scene.fog.far = t.fogFar; }
       key.color.set(t.key); fill.color.set(t.fill); bloom.strength = t.bloom ?? 0.8;
     },
     dispose() {
