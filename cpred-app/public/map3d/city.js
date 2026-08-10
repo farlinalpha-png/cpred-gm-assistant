@@ -15,6 +15,10 @@ const POLYS = () => (typeof NC_DISTRICT_POLYS !== 'undefined' ? NC_DISTRICT_POLY
 
 const LS_KEY = 'cpred_map3d_city_prefs';
 
+// One press of the on-screen zoom buttons, as a distance multiplier. Bigger
+// than a wheel notch on purpose: a button click should visibly get somewhere.
+const ZOOM_BUTTON_STEP = 1.7;
+
 // Named neon palettes, like the reference site's colour modes.
 const MODES = {
   neon:    { label: 'Neon',    tint: 0xffffff, exposure: 1.15, bloom: 0.55, ink: '#00e5ff' },
@@ -50,7 +54,9 @@ export function mount(container, ctx) {
 
   const stage = createStage(container, {
     theme: THEMES.street,
-    cameraPos: [W / 2, H * 0.95, H / 2 + 0.01],   // straight down, like opening a map
+    // Straight down, like opening a map, at the same height the Fit button
+    // gives — otherwise the view you start on is not the view you can get back.
+    cameraPos: [W / 2, fitH(), H / 2 + 0.01],
     target: [W / 2, 0, H / 2],
     exposure: MODES[prefs.mode]?.exposure ?? 1.15,
     environment: false,
@@ -76,7 +82,19 @@ export function mount(container, ctx) {
   controls.enableRotate = !!prefs.tilt;
   controls.maxPolarAngle = Math.PI * 0.46;
   controls.minDistance = 12;
-  controls.maxDistance = Math.max(W, H) * 1.5;
+  // One wheel notch is 0.95^zoomSpeed. At the default speed that is a 5% step,
+  // so crossing the whole range took about fifty notches — which reads as the
+  // zoom being broken rather than slow. 3.4 makes a notch ~1.2x, so the full
+  // range is around eighteen.
+  controls.zoomSpeed = 3.4;
+  // Zoom toward whatever the pointer is over, the way every map behaves.
+  // Without it, reaching a corner of the plan means alternating zoom and pan.
+  controls.zoomToCursor = true;
+  // Zoom-out headroom is set against the height that frames the whole plan, so
+  // there is always somewhere to go from the resting view. A fixed multiple of
+  // the map size left barely any room at wide aspects.
+  const setZoomRange = () => { controls.maxDistance = fitH() * 1.6; };
+  setZoomRange();
   controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
   controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 
@@ -163,7 +181,7 @@ export function mount(container, ctx) {
     stage.requestRender();
   }
   drawBackdrop();
-  const bdObserver = new ResizeObserver(() => drawBackdrop());
+  const bdObserver = new ResizeObserver(() => { drawBackdrop(); setZoomRange(); });
   bdObserver.observe(container);
 
   // ── Overlay groups ───────────────────────────────────────────────
@@ -446,13 +464,41 @@ export function mount(container, ctx) {
       ? new THREE.Vector3(x, dist, z + 0.01)
       : new THREE.Vector3(x, dist * 0.92, z + dist * 0.55);
     const toT = new THREE.Vector3(x, 0, z);
-    tween = { t: 0, from, to, fromT, toT };
+    tween = { t: 0, speed: 1.5, from, to, fromT, toT };
+  }
+
+  // Fixed zoom step about the current view centre, for the on-screen buttons.
+  // The wheel dollies continuously; a button should make one predictable jump.
+  function zoomStep(factor) {
+    const dir = camera.position.clone().sub(controls.target);
+    const d = Math.min(controls.maxDistance,
+      Math.max(controls.minDistance, dir.length() * factor));
+    tween = { t: 0, speed: 3.2,
+      from: camera.position.clone(), to: controls.target.clone().add(dir.setLength(d)),
+      fromT: controls.target.clone(), toT: controls.target.clone() };
   }
   // Frame the whole plan, straight down — the map's resting state.
   function fitAll() { flyTo(W / 2, H / 2, fitH(), true); }
+  // Zooming toward the cursor walks the orbit target across the plan, and
+  // enough of it near an edge leaves the GM staring at empty backdrop with no
+  // way back but Fit. Keep the target on the map, shifting the camera by the
+  // same amount so the correction is invisible.
+  const TARGET_SLACK = 10;
+  function clampTarget() {
+    const t = controls.target;
+    const x = Math.min(W + TARGET_SLACK, Math.max(-TARGET_SLACK, t.x));
+    const z = Math.min(H + TARGET_SLACK, Math.max(-TARGET_SLACK, t.z));
+    if (x === t.x && z === t.z) return;
+    camera.position.x += x - t.x;
+    camera.position.z += z - t.z;
+    t.x = x; t.z = z;
+    stage.requestRender();
+  }
+
   stage.setFrame(dt => {
+    clampTarget();
     if (tween) {
-      tween.t = Math.min(1, tween.t + dt * 1.5);
+      tween.t = Math.min(1, tween.t + dt * tween.speed);
       const e = tween.t < 0.5 ? 2 * tween.t * tween.t : 1 - Math.pow(-2 * tween.t + 2, 2) / 2;
       camera.position.lerpVectors(tween.from, tween.to, e);
       controls.target.lerpVectors(tween.fromT, tween.toT, e);
@@ -471,6 +517,29 @@ export function mount(container, ctx) {
     const tip = el('div', 'nc-tip');
     const panel = el('div', 'nc-panel');
     root.append(side, tip, panel);
+
+    // On-map zoom controls. Sits just clear of the sidebar rather than in the
+    // usual bottom-right corner, because the district panel slides in over
+    // that side and would bury it.
+    const zoomBox = el('div', 'nc-zoom');
+    const zIn = el('button', 'nc-zbtn'); zIn.textContent = '+'; zIn.title = 'Zoom in';
+    const zOut = el('button', 'nc-zbtn'); zOut.textContent = '−'; zOut.title = 'Zoom out';
+    const zFit = el('button', 'nc-zbtn nc-zfit'); zFit.textContent = '⤡'; zFit.title = 'Fit the whole map';
+    zIn.onclick = () => zoomStep(1 / ZOOM_BUTTON_STEP);
+    zOut.onclick = () => zoomStep(ZOOM_BUTTON_STEP);
+    zFit.onclick = () => fitAll();
+    zoomBox.append(zIn, zOut, zFit);
+    root.appendChild(zoomBox);
+
+    // Grey the buttons out at the ends of the range, so it is obvious the map
+    // has stopped rather than the control having failed.
+    function syncZoom() {
+      const d = camera.position.distanceTo(controls.target);
+      zIn.disabled = d <= controls.minDistance * 1.01;
+      zOut.disabled = d >= controls.maxDistance * 0.99;
+    }
+    controls.addEventListener('change', syncZoom);
+    syncZoom();
 
     // search
     const search = el('input', 'nc-search');
@@ -640,7 +709,8 @@ export function mount(container, ctx) {
     }
 
     renderFactionList();
-    return { side, tip, panel, count: cnt, showDistrict, showLocation, renderFactionList, syncBoxes };
+    return { side, tip, panel, zoomBox, count: cnt, showDistrict, showLocation,
+      renderFactionList, syncBoxes };
   }
 
   function setMode(k) {
@@ -678,7 +748,7 @@ export function mount(container, ctx) {
     renderer.domElement.removeEventListener('pointerup', onUp);
     renderer.domElement.removeEventListener('click', onClick);
     disposables.forEach(o => { try { o.dispose && o.dispose(); } catch {} });
-    [ui.side, ui.tip, ui.panel].forEach(n => n && n.remove());
+    [ui.side, ui.tip, ui.panel, ui.zoomBox].forEach(n => n && n.remove());
     container.querySelectorAll('style').forEach(s => s.remove());
     origDispose();
   };
@@ -810,6 +880,17 @@ function uiCSS() {
 .nc-mini{background:var(--mid);border:1px solid var(--border);color:var(--muted);border-radius:3px;
   padding:4px 7px;font-family:'Share Tech Mono',monospace;font-size:9px;cursor:pointer}
 .nc-mini:hover{border-color:var(--neon);color:var(--neon)}
+.nc-zoom{position:absolute;left:282px;bottom:14px;z-index:6;display:flex;flex-direction:column;gap:4px}
+.nc-zbtn{width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,10,20,.92);border:1px solid var(--border);color:var(--neon);border-radius:4px;
+  cursor:pointer;font-family:'Orbitron',monospace;font-size:16px;line-height:1;
+  box-shadow:0 2px 10px rgba(0,0,0,.55)}
+.nc-zbtn:hover:not(:disabled){border-color:var(--neon);background:rgba(0,229,255,.14);
+  box-shadow:0 0 12px rgba(0,229,255,.3)}
+.nc-zbtn:disabled{color:var(--dim);border-color:rgba(42,42,69,.6);cursor:default}
+.nc-zfit{margin-top:4px;font-size:13px;color:var(--gold)}
+.nc-zfit:hover:not(:disabled){border-color:var(--gold);background:rgba(255,214,0,.12);
+  box-shadow:0 0 12px rgba(255,214,0,.25)}
 .nc-tip{position:absolute;display:none;pointer-events:none;z-index:8;background:rgba(10,10,20,.95);
   border:1px solid var(--neon);border-radius:4px;padding:5px 9px;font-family:'Share Tech Mono',monospace;
   font-size:10px;color:var(--text);box-shadow:0 0 14px rgba(0,229,255,.25);max-width:260px}

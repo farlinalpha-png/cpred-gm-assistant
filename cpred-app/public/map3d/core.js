@@ -118,12 +118,18 @@ export function createStage(container, opts = {}) {
   // Render-on-demand. A mode with nothing moving in it — a map you are reading
   // rather than an animated scene — has no reason to redraw 60 times a second,
   // and this panel stays open for a whole session on laptops that need the GPU
-  // for other things. OrbitControls.update() reports whether the camera
-  // actually changed (it keeps returning true while damping settles); anything
-  // else that changes a pixel calls requestRender().
+  // for other things.
+  //
+  // The camera signal has to be the controls' own 'change' event, not the
+  // return value of update() from the frame loop. OrbitControls calls update()
+  // inside its wheel and pointer handlers, which consumes the movement and
+  // records it as the new baseline; the loop's later update() then reports
+  // nothing changed and the frame is never drawn. That is exactly how wheel
+  // zoom ended up moving the camera without repainting.
   const onDemand = opts.onDemand === true;
   let dirty = true;
   const requestRender = () => { dirty = true; };
+  controls.addEventListener('change', requestRender);
 
   function applyViewportSize() {
     const w = container.clientWidth || 1, h = container.clientHeight || 1;
@@ -146,7 +152,7 @@ export function createStage(container, opts = {}) {
     if (!running) return;
     requestAnimationFrame(loop);
     const dt = clock.getDelta();
-    if (controls.update()) dirty = true;
+    controls.update();                       // marks the frame dirty via 'change'
     if (onFrame) onFrame(dt, clock.elapsedTime);
     if (!onDemand || dirty) { dirty = false; composer.render(); }
   })();
