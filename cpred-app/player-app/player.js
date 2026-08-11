@@ -100,7 +100,7 @@ function blank() {
   return { id: String(Date.now()), name: 'New Edgerunner', handle: '', role: 'Solo',
     age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4, roleSubRanks: {}, trackerIP: 0,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    skills: {}, skillSpecs: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
+    skills: {}, skillSpecs: {}, skillMods: {}, medtechDrugs: [], eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
     weapons: [], armorList: [], armor: { head:'', headSP:0, body:'', bodySP:0, shield:'', shieldSP:0 },
     cyberware: [], gear: [], netPrograms: [], vehicles: [], updatedAt: Date.now() };
 }
@@ -109,8 +109,9 @@ function blank() {
 function normalize(c) {
   const b = blank();
   Object.keys(b).forEach(k => { if (c[k] === undefined || c[k] === null) c[k] = b[k]; });
-  ['weapons','armorList','cyberware','gear','netPrograms','vehicles'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
+  ['weapons','armorList','cyberware','gear','netPrograms','vehicles','medtechDrugs'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
   if (typeof c.skills !== 'object' || Array.isArray(c.skills)) c.skills = {};
+  if (typeof c.skillMods !== 'object' || Array.isArray(c.skillMods)) c.skillMods = {};
   if (typeof c.lifepath !== 'object') c.lifepath = {};
   if (typeof c.armor !== 'object') c.armor = b.armor;
   return c;
@@ -173,6 +174,39 @@ function effSkillMods(c) {
     (item.upgrades || []).forEach(u => { if (u.mods && u.mods.skills) Object.entries(u.mods.skills).forEach(([n, a]) => add(n, a)); });
   });
   return out;
+}
+
+// Equipment + role-ability bonuses, with a per-source breakdown for the
+// MOD cell's tooltip → { skillName: { total, parts: [...] } }
+function autoSkillModDetail(c) {
+  const out = {};
+  const add = (name, amt, label) => {
+    if (!amt) return;
+    if (!out[name]) out[name] = { total: 0, parts: [] };
+    out[name].total += amt;
+    out[name].parts.push(`${label} ${amt > 0 ? '+' : ''}${amt}`);
+  };
+  Object.entries(effSkillMods(c)).forEach(([n, a]) => add(n, a, 'Equipment'));
+  ((CPRED_DATA.roleSkillBonuses || {})[c.role] || []).forEach(b => {
+    const rankInSub = (c.roleSubRanks && parseInt(c.roleSubRanks[b.sub])) || 0;
+    if (!rankInSub) return;
+    Object.values(CPRED_DATA.skills).flat().forEach(sk => { if (b.match.test(sk.name)) add(sk.name, rankInSub, b.sub); });
+  });
+  return out;
+}
+
+function autoSkillMod(detail, name) { return (detail[name] && detail[name].total) || 0; }
+function autoSkillModWhy(detail, name) {
+  return detail[name] ? detail[name].parts.join(' · ') : 'No automatic modifiers';
+}
+
+function roleSkillModList(c) {
+  return ((CPRED_DATA.roleSkillBonuses || {})[c.role] || []).map(b => {
+    const rankInSub = (c.roleSubRanks && parseInt(c.roleSubRanks[b.sub])) || 0;
+    if (!rankInSub) return null;
+    const names = Object.values(CPRED_DATA.skills).flat().filter(sk => b.match.test(sk.name)).map(sk => sk.name);
+    return `${b.sub} +${rankInSub} to ${names.join(', ')}${b.note ? ` (${b.note})` : ''}`;
+  }).filter(Boolean);
 }
 
 function effStats(c) {
@@ -382,15 +416,53 @@ function fillRoleBlurb() {
 }
 
 // ── Role Ability sub-allocation (Tech/Maker, Medtech/Medicine) ───────
+// A Rank-up grants 1 Rank in `perRank` DIFFERENT specialties (Maker gives two,
+// Medicine gives one), so the pool is rank × perRank. Either way a single
+// specialty gains at most 1 point per Rank-up, so none may exceed the rank —
+// and some specialties carry their own hard cap on top of that.
+function roleSubBudget(cfg, rank) {
+  return { pool: rank * (cfg.perRank || 1), cap: rank };
+}
+
+function roleSubCap(cfg, rank, subName) {
+  const entry = cfg.subs.find(([name]) => name === subName);
+  const hardMax = entry && entry[2] && entry[2].max;
+  return Math.min(rank, hardMax === undefined ? Infinity : hardMax);
+}
+
 function setRoleSubRank(sub, val, rerender) {
   if (!cur.roleSubRanks) cur.roleSubRanks = {};
   const cfg = CPRED_DATA.roleSubAbilities[cur.role];
   if (!cfg) return;
   const rank = cur.roleAbilityRank || 4;
-  let v = Math.max(0, parseInt(val) || 0);
+  const { pool } = roleSubBudget(cfg, rank);
+  let v = Math.min(roleSubCap(cfg, rank, sub), Math.max(0, parseInt(val) || 0));
   const otherUsed = cfg.subs.reduce((t, [name]) => name === sub ? t : t + (cur.roleSubRanks[name] || 0), 0);
-  if (v + otherUsed > rank) v = Math.max(0, rank - otherUsed);
+  if (v + otherUsed > pool) v = Math.max(0, pool - otherUsed);
   cur.roleSubRanks[sub] = v;
+  save();
+  if (rerender && typeof window[rerender] === 'function') window[rerender]();
+}
+
+// Medtech: Surgery Skill = 2 per Surgery point; Medical Tech Skill =
+// Pharmaceuticals points + Cryosystem Operation points. Both cap at 10.
+function medtechDerived(c) {
+  const t = CPRED_DATA.medtechTables;
+  const pts = n => (c.roleSubRanks && parseInt(c.roleSubRanks[n])) || 0;
+  const surgeryPts = pts('Surgery'), pharmaPts = pts('Pharmaceuticals'), cryoPts = pts('Cryosystem Operation');
+  return {
+    surgeryPts, pharmaPts, cryoPts,
+    surgerySkill: Math.min(t.surgerySkillMax, surgeryPts * t.surgerySkillPerPoint),
+    surgeryCapped: surgeryPts * t.surgerySkillPerPoint > t.surgerySkillMax,
+    medicalTechSkill: Math.min(t.medicalTechSkillMax, pharmaPts + cryoPts)
+  };
+}
+
+function toggleMedtechDrug(name, rerender) {
+  if (!Array.isArray(cur.medtechDrugs)) cur.medtechDrugs = [];
+  const i = cur.medtechDrugs.indexOf(name);
+  if (i >= 0) cur.medtechDrugs.splice(i, 1);
+  else if (cur.medtechDrugs.length < medtechDerived(cur).pharmaPts) cur.medtechDrugs.push(name);
   save();
   if (rerender && typeof window[rerender] === 'function') window[rerender]();
 }
@@ -400,21 +472,78 @@ function roleSubAllocHTML(rerender) {
   if (!cfg) return '';
   if (!cur.roleSubRanks) cur.roleSubRanks = {};
   const rank = cur.roleAbilityRank || 4;
+  const { pool } = roleSubBudget(cfg, rank);
   const used = cfg.subs.reduce((t, [name]) => t + (cur.roleSubRanks[name] || 0), 0);
-  const remaining = rank - used;
+  const remaining = pool - used;
   const remColor = remaining < 0 ? 'var(--red)' : remaining > 0 ? 'var(--gold)' : 'var(--green)';
   return `
-    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px">Distribute ${cfg.ability} Rank (${rank} pts) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px">Distribute ${cfg.ability} Specialty Ranks (${pool} pt${pool === 1 ? '' : 's'} at Rank ${rank}) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.5;margin-bottom:6px">${cfg.note}</div>
     <div class="grid2">
-      ${cfg.subs.map(([name, desc]) => `
+      ${cfg.subs.map(([name, desc, opts]) => {
+        const subCap = roleSubCap(cfg, rank, name);
+        return `
         <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${name}</span>
-            <input type="number" min="0" max="${rank}" value="${cur.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${(opts && opts.label) || name}</span>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <span style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">max ${subCap}</span>
+              <input type="number" min="0" max="${subCap}" value="${cur.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+            </div>
           </div>
           <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5">${desc}</div>
+        </div>`; }).join('')}
+    </div>
+    ${cur.role === 'Medtech' ? medtechMedicineHTML(rerender) : ''}`;
+}
+
+// Medtech Medicine detail: granted skills + the three Specialty tables
+function medtechMedicineHTML(rerender) {
+  const t = CPRED_DATA.medtechTables;
+  const d = medtechDerived(cur);
+  const owned = Array.isArray(cur.medtechDrugs) ? cur.medtechDrugs : [];
+  const lbl = 'font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px';
+  const th = 'text-align:left;padding:4px 6px;font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;border-bottom:1px solid var(--border)';
+  const td = 'padding:5px 6px;border-bottom:1px solid rgba(42,42,69,0.5);font-family:\'Share Tech Mono\',monospace;font-size:10px;color:#b0b0c8;line-height:1.5;vertical-align:top';
+
+  return `
+    <div style="${lbl}">Skills Granted By Your Specialties</div>
+    <div class="grid2">
+      ${[['Surgery Skill', d.surgerySkill, `${d.surgeryPts} × ${t.surgerySkillPerPoint}${d.surgeryCapped ? ' — capped at ' + t.surgerySkillMax : ' (max ' + t.surgerySkillMax + ')'}`],
+         ['Medical Tech Skill', d.medicalTechSkill, `Pharma ${d.pharmaPts} + Cryo ${d.cryoPts} (max ${t.medicalTechSkillMax})`]]
+        .map(([label, val, note]) => `
+        <div style="background:var(--mid);border:1px solid ${val > 0 ? 'var(--neon)' : 'var(--border)'};border-radius:4px;padding:8px 10px">
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px">${label}</div>
+          <div style="font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:${val > 0 ? 'var(--neon)' : 'var(--dim)'}">${val}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:2px">${note}</div>
         </div>`).join('')}
-    </div>`;
+    </div>
+
+    <div style="${lbl}">Medical Tech (Pharmaceuticals) — ${owned.length}/${d.pharmaPts} unlocked</div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.6;margin-bottom:6px">${t.pharmaNotes.map(n => '• ' + n).join('<br>')}</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th};width:24px"></th><th style="${th};width:88px">Drug</th><th style="${th}">Effect</th></tr></thead>
+      <tbody>${t.pharmaceuticals.map(p => {
+        const has = owned.includes(p.name);
+        const full = !has && owned.length >= d.pharmaPts;
+        return `<tr style="${has ? 'background:rgba(0,229,255,0.05)' : ''}">
+          <td style="${td};text-align:center"><input type="checkbox" ${has ? 'checked' : ''} ${full ? 'disabled' : ''} onchange="toggleMedtechDrug('${p.name}', '${rerender || ''}')"></td>
+          <td style="${td};color:${has ? 'var(--neon)' : 'var(--muted)'}">${p.name}</td>
+          <td style="${td}">${p.effect}</td></tr>`;
+      }).join('')}</tbody>
+    </table>
+
+    <div style="${lbl}">Medical Tech (Cryosystem Operation) — ${d.cryoPts} point${d.cryoPts === 1 ? '' : 's'}</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th};width:40px">Level</th><th style="${th}">Benefit</th></tr></thead>
+      <tbody>${t.cryosystem.map(r => {
+        const have = d.cryoPts >= r.level;
+        return `<tr style="${have ? 'background:rgba(0,229,255,0.05)' : 'opacity:.55'}">
+          <td style="${td};text-align:center;font-family:'Orbitron',monospace;font-weight:700;color:${have ? 'var(--neon)' : 'var(--dim)'}">${r.level}</td>
+          <td style="${td}">${r.benefit}</td></tr>`;
+      }).join('')}</tbody>
+    </table>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:6px">${t.cryoNote}</div>`;
 }
 
 // ── Sub-skill (specialization) fields ────────────────────────────────
@@ -431,12 +560,26 @@ function skillSpecInput(name) {
     oninput="setSkillSpec('${name.replace(/'/g, "\\'")}', this.value)">`;
 }
 
+// ── "Other" skill modifiers (same field the GM app shows) ────────────
+function otherSkillMod(c, name) {
+  const v = c && c.skillMods ? parseInt(c.skillMods[name]) : 0;
+  return isNaN(v) ? 0 : v;
+}
+
+function setOtherSkillMod(name, val) {
+  if (!cur.skillMods) cur.skillMods = {};
+  const n = parseInt(val);
+  if (!n || isNaN(n)) delete cur.skillMods[name];
+  else cur.skillMods[name] = n;
+  save(); renderCharSub();   // refresh whichever skill grid is on screen
+}
+
 // ── Stats & Skills (full grid, like the GM app) ──────────────────────
 function renderStatsSkills() {
   const { eff, statMods } = effStats(cur);
-  const skillMods = effSkillMods(cur);
+  const autoMods = autoSkillModDetail(cur);
   const hp = 10 + 5 * (eff.BODY || 5);
-  const modList = equipmentModList(cur);
+  const modList = equipmentModList(cur).concat(roleSkillModList(cur));
   document.getElementById('sub-stats-body').innerHTML = `
     <div class="grid5" style="margin-bottom:8px">
       ${CPRED_DATA.stats.map(s => {
@@ -451,28 +594,32 @@ function renderStatsSkills() {
     <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:${modList.length ? '6px' : '12px'}">
       HP ${hp} · Seriously Wounded ${Math.ceil(hp / 2)} · Death Save ${eff.BODY || 5} · Humanity ${curHumanity(cur)}/${(cur.stats.EMP || 5) * 10}
     </div>
-    ${modList.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green);background:rgba(105,240,174,0.06);border:1px solid rgba(105,240,174,0.25);border-radius:4px;padding:6px 8px;margin-bottom:12px;line-height:1.6">◆ Equipment modifiers: ${modList.join(' · ')}</div>` : ''}
+    ${modList.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green);background:rgba(105,240,174,0.06);border:1px solid rgba(105,240,174,0.25);border-radius:4px;padding:6px 8px;margin-bottom:12px;line-height:1.6">◆ Active modifiers: ${modList.join(' · ')}</div>` : ''}
     <div class="grid3">
       ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
         <div><div class="skill-cat">${cat}</div>
-          <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:38px;text-align:center">LVL</span><span style="width:22px;text-align:right">MOD</span><span style="width:22px;text-align:right">BASE</span></span></div>
+          <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:38px;text-align:center">LVL</span><span style="width:22px;text-align:right">MOD</span><span style="width:38px;text-align:center">OTHER</span><span style="width:22px;text-align:right">TOTAL</span></span></div>
           ${skills.map(sk => {
             const lvl = cur.skills[sk.name] || 0;
-            const mod = skillMods[sk.name] || 0;
-            const base = (eff[sk.stat] || 5) + lvl + mod;
-            const active = lvl > 0 || mod !== 0;
+            const mod = autoSkillMod(autoMods, sk.name);
+            const other = otherSkillMod(cur, sk.name);
+            const base = (eff[sk.stat] || 5) + lvl + mod + other;
+            const active = lvl > 0 || mod !== 0 || other !== 0;
             const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
             return `<div class="skill-row" ${active ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-              <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:48%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+              <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:40%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
               <span style="display:flex;align-items:center;gap:4px">
                 <input type="number" min="0" max="10" value="${lvl}" style="width:38px;text-align:center;font-size:10px;padding:2px"
                   onchange="setSkill('${sk.name.replace(/'/g, "\\'")}', this.value)">
-                <span title="Equipment MOD" style="width:22px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
-                <span style="width:22px;text-align:right;${mod !== 0 ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
+                <span title="${autoSkillModWhy(autoMods, sk.name)}" style="width:22px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
+                <input type="number" value="${other || ''}" placeholder="0" title="Other modifiers — adds to the total"
+                  style="width:38px;text-align:center;font-size:10px;padding:2px;color:${other ? 'var(--gold)' : 'inherit'}"
+                  onchange="setOtherSkillMod('${sk.name.replace(/'/g, "\\'")}', this.value)">
+                <span style="width:22px;text-align:right;${(mod !== 0 || other !== 0) ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
               </span></div>`;
           }).join('')}</div>`).join('')}
     </div>
-    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is the equipment bonus. BASE = effective STAT + level + MOD.</div>`;
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is worked out from your equipment and role ability — tap and hold it for the breakdown. OTHER is anything else you want to add. TOTAL = effective STAT + LVL + MOD + OTHER.</div>`;
 }
 
 function setSkill(name, v) {
@@ -583,7 +730,7 @@ function edI(path, val, opts = {}) {
 function renderSheet() {
   const el = document.getElementById('sub-sheet');
   const { eff, notes, statMods } = effStats(cur);
-  const skillMods = effSkillMods(cur);
+  const autoMods = autoSkillModDetail(cur);
   const hp = 10 + 5 * (eff.BODY || 5);
   const hl = totalHL(cur);
   const hum = curHumanity(cur);
@@ -620,7 +767,7 @@ function renderSheet() {
       </div>
     </div>
 
-    ${(() => { const ml = equipmentModList(cur); return ml.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green)">◆ Equipment modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
+    ${(() => { const ml = equipmentModList(cur).concat(roleSkillModList(cur)); return ml.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green)">◆ Modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
 
     <div class="cs-section">
       <div class="cs-title">Stats (base — effective shown when modified)</div>
@@ -663,24 +810,28 @@ function renderSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Skills — every level editable · MOD = equipment bonus (bold = modified)</div>
+      <div class="cs-title">Skills — LVL and OTHER editable · MOD = equipment + role bonuses (bold = modified)</div>
       <div class="grid3">
         ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
           <div><div class="skill-cat">${cat}</div>
-            <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:36px;text-align:center">LVL</span><span style="width:20px;text-align:right">MOD</span><span style="width:22px;text-align:right">BASE</span></span></div>
+            <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:36px;text-align:center">LVL</span><span style="width:20px;text-align:right">MOD</span><span style="width:36px;text-align:center">OTHER</span><span style="width:22px;text-align:right">TOTAL</span></span></div>
             ${skills.map(sk => {
               const lvl = cur.skills[sk.name] || 0;
-              const mod = skillMods[sk.name] || 0;
-              const base = (eff[sk.stat] || 5) + lvl + mod;
-              const active = lvl > 0 || mod !== 0;
+              const mod = autoSkillMod(autoMods, sk.name);
+              const other = otherSkillMod(cur, sk.name);
+              const base = (eff[sk.stat] || 5) + lvl + mod + other;
+              const active = lvl > 0 || mod !== 0 || other !== 0;
               const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
               return `<div class="skill-row" ${active ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-                <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:44%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+                <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:36%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <input type="number" min="0" max="10" value="${lvl}" style="width:36px;text-align:center;font-size:10px;padding:1px"
                     onchange="setSkillSheet('${sk.name.replace(/'/g, "\\'")}', this.value)">
-                  <span title="Equipment MOD" style="width:20px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
-                  <span style="width:22px;text-align:right;${mod !== 0 ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
+                  <span title="${autoSkillModWhy(autoMods, sk.name)}" style="width:20px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
+                  <input type="number" value="${other || ''}" placeholder="0" title="Other modifiers — adds to the total"
+                    style="width:36px;text-align:center;font-size:10px;padding:1px;color:${other ? 'var(--gold)' : 'inherit'}"
+                    onchange="setOtherSkillMod('${sk.name.replace(/'/g, "\\'")}', this.value)">
+                  <span style="width:22px;text-align:right;${(mod !== 0 || other !== 0) ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
                 </span></div>`;
             }).join('')}</div>`).join('')}
       </div>

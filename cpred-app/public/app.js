@@ -32,8 +32,8 @@ function newBlankChar() {
     age: 25, gender: '', aliases: '', notes: '',
     rep: 0, eddies: 500,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    roleAbilityRank: 4, roleSubRanks: {},
-    skills: {}, skillSpecs: {},
+    roleAbilityRank: 4, roleSubRanks: {}, medtechDrugs: [],
+    skills: {}, skillSpecs: {}, skillMods: {},
     hp: 40, maxHp: 40, wounds: 0,
     humanity: 50, maxHumanity: 50,
     lifepath: {},
@@ -311,11 +311,13 @@ function updatePointsRemaining() {
 
 function buildSkillInputTables() {
   const container = document.getElementById('skill-input-tables');
+  const { eff } = effectiveStats(char);
+  const autoMods = autoSkillModDetail(char);
   container.innerHTML = Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
     <div>
       <div class="cs-title" style="margin-bottom:8px">${cat}</div>
       <table class="skill-table">
-        <thead><tr><th>Skill</th><th>Stat</th><th>Lvl</th><th>Base</th></tr></thead>
+        <thead><tr><th>Skill</th><th>Stat</th><th>Lvl</th><th title="Other modifiers">Other</th><th>Total</th></tr></thead>
         <tbody>
           ${skills.map(sk => `
             <tr>
@@ -324,8 +326,9 @@ function buildSkillInputTables() {
               <td><input type="number" id="skill-lvl-${safeName(sk.name)}" class="skill-lvl-input"
                 value="${char.skills[sk.name]||0}" min="0" max="6"
                 oninput="onSkillChange('${sk.name}','${sk.stat}',this.value)"></td>
-              <td class="skill-base" id="skill-base-${safeName(sk.name)}">
-                ${(char.stats[sk.stat]||5) + (char.skills[sk.name]||0)}
+              <td>${otherModInput(sk.name)}</td>
+              <td class="skill-base" id="skill-base-${safeName(sk.name)}" data-skill-total="${sk.name}">
+                ${skillTotal(char, sk, eff, autoSkillMod(autoMods, sk.name))}
               </td>
             </tr>`).join('')}
         </tbody>
@@ -335,9 +338,7 @@ function buildSkillInputTables() {
 
 function onSkillChange(name, stat, val) {
   char.skills[name] = parseInt(val) || 0;
-  const base = (char.stats[stat] || 5) + (char.skills[name] || 0);
-  const el = document.getElementById('skill-base-' + safeName(name));
-  if (el) el.textContent = base;
+  updateSkillTotalCells(name);
   updateSkillPointsRemaining();
 }
 
@@ -1207,8 +1208,9 @@ function normalizeChar(c) {
   if (typeof c.stats !== 'object' || Array.isArray(c.stats)) c.stats = { ...b.stats };
   CPRED_DATA.stats.forEach(s => { if (typeof c.stats[s] !== 'number') c.stats[s] = c.stats[s] ? parseInt(c.stats[s]) || 5 : 5; });
   if (typeof c.skills !== 'object' || Array.isArray(c.skills)) c.skills = {};
+  if (typeof c.skillMods !== 'object' || Array.isArray(c.skillMods)) c.skillMods = {};
   if (typeof c.lifepath !== 'object' || Array.isArray(c.lifepath)) c.lifepath = {};
-  ['weapons', 'cyberware', 'gear', 'vehicles', 'netPrograms'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
+  ['weapons', 'cyberware', 'gear', 'vehicles', 'netPrograms', 'medtechDrugs'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
   if (typeof c.armor !== 'object' || Array.isArray(c.armor)) c.armor = { ...b.armor };
   return c;
 }
@@ -1226,13 +1228,30 @@ function saveToLocalStorage() {
   localStorage.setItem('cpred_chars', JSON.stringify(savedChars));
 }
 
+// "Save" writes the character to its one file in the app's character folder.
+// Exporting a portable copy somewhere else is a separate, explicit action —
+// saving must never produce a second file for the same character.
 async function saveCharacter() {
   collectAllFormData();
   saveToLocalStorage();
+  if (!ipc) { notify('Saved to browser storage', 'success'); return; }
+  const kind = char._kind === 'npcs' ? 'npcs' : 'pcs';
+  cancelQueuedStoreSave(char.id);   // the queued write would only repeat this one
+  const r = await callIPC('store-save', kind, char);
+  if (r.success) {
+    char._kind = kind;
+    if (r.file) char._file = r.file;
+    notify('Saved ' + (char.name || 'character') + ' → ' + kind + '/' + r.file, 'success');
+  } else notify('Save failed: ' + r.error, 'error');
+}
+
+// Export a standalone .cpred copy to a folder of the user's choosing. This is
+// a copy for sharing/backup — the character's own file stays in the store.
+async function exportCharacterFile() {
+  collectAllFormData();
   const result = await callIPC('save-character', char);
-  if (result.success) notify('Saved: ' + result.path, 'success');
-  else if (result.error) notify('Save failed: ' + result.error, 'error');
-  else { notify('Saved to session storage', 'success'); }
+  if (result.success) notify('Exported copy: ' + result.path, 'success');
+  else if (result.error) notify('Export failed: ' + result.error, 'error');
 }
 
 async function loadCharacter() {
@@ -1785,6 +1804,100 @@ function effectiveSkillMods(c) {
   return out;
 }
 
+// ── Automatic skill modifiers (equipment + role ability) ───────────
+// Everything the sheet can work out for itself, with a per-source breakdown
+// so the MOD cell can explain where the number came from.
+// → { skillName: { total, parts: ['Equipment +2', 'Field Expertise +3'] } }
+function autoSkillModDetail(c) {
+  const out = {};
+  const add = (name, amt, label) => {
+    if (!amt) return;
+    if (!out[name]) out[name] = { total: 0, parts: [] };
+    out[name].total += amt;
+    out[name].parts.push(`${label} ${amt > 0 ? '+' : ''}${amt}`);
+  };
+  Object.entries(effectiveSkillMods(c)).forEach(([n, a]) => add(n, a, 'Equipment'));
+  ((CPRED_DATA.roleSkillBonuses || {})[c.role] || []).forEach(b => {
+    const rankInSub = (c.roleSubRanks && parseInt(c.roleSubRanks[b.sub])) || 0;
+    if (!rankInSub) return;
+    Object.values(CPRED_DATA.skills).flat().forEach(sk => {
+      if (b.match.test(sk.name)) add(sk.name, rankInSub, b.sub);
+    });
+  });
+  return out;
+}
+
+function autoSkillMod(detail, name) { return (detail[name] && detail[name].total) || 0; }
+function autoSkillModWhy(detail, name) {
+  return detail[name] ? detail[name].parts.join(' · ') : 'No automatic modifiers';
+}
+
+// Compact "Field Expertise +3 to Basic Tech, Cybertech, ..." lines for the
+// modifier banner above the skill tables.
+function roleSkillModList(c) {
+  return ((CPRED_DATA.roleSkillBonuses || {})[c.role] || []).map(b => {
+    const rankInSub = (c.roleSubRanks && parseInt(c.roleSubRanks[b.sub])) || 0;
+    if (!rankInSub) return null;
+    const names = Object.values(CPRED_DATA.skills).flat().filter(sk => b.match.test(sk.name)).map(sk => sk.name);
+    return `${b.sub} +${rankInSub} to ${names.join(', ')}${b.note ? ` (${b.note})` : ''}`;
+  }).filter(Boolean);
+}
+
+// ── "Other" skill modifiers ────────────────────────────────────────
+// A free-form per-skill bonus/penalty the GM or player types in (role
+// perks, cyberware the app doesn't model, temporary buffs, wound
+// penalties...). It stacks on top of the equipment MOD and is part of
+// the total check number: STAT + LVL + GEAR + OTHER.
+function otherSkillMod(c, name) {
+  const v = c && c.skillMods ? parseInt(c.skillMods[name]) : 0;
+  return isNaN(v) ? 0 : v;
+}
+
+function setOtherSkillMod(name, val) {
+  if (!char.skillMods) char.skillMods = {};
+  const n = parseInt(val);
+  if (!n || isNaN(n)) delete char.skillMods[name];
+  else char.skillMods[name] = n;
+  saveToLocalStorage();
+}
+
+// Total skill check number: effective STAT + skill level + gear + other
+function skillTotal(c, sk, eff, autoMod) {
+  return (eff[sk.stat] || 5) + (c.skills[sk.name] || 0) + (autoMod || 0) + otherSkillMod(c, sk.name);
+}
+
+// The editable "OTHER" cell, shared by the wizard, the Stats view and the
+// full sheet so all three read and write the same number.
+function otherModInput(name) {
+  const v = (char.skillMods && char.skillMods[name]) || '';
+  const esc = name.replace(/'/g, "\\'");
+  return `<input type="number" value="${v}" placeholder="0" title="Other modifiers — adds to the total check number"
+    style="width:38px;text-align:center;background:var(--mid);border:1px solid var(--border);border-radius:2px;
+    color:${v ? 'var(--gold)' : 'var(--dim)'};font-family:'Orbitron',monospace;font-size:10px;padding:1px"
+    onclick="event.stopPropagation()"
+    oninput="setOtherSkillMod('${esc}', this.value);updateSkillTotalCells('${esc}')">`;
+}
+
+// Repaint every "total" cell for one skill in place. Used instead of a full
+// re-render so typing in an OTHER box never steals focus from it.
+function updateSkillTotalCells(name) {
+  const sk = Object.values(CPRED_DATA.skills).flat().find(s => s.name === name);
+  if (!sk) return;
+  const { eff } = effectiveStats(char);
+  const gear = autoSkillMod(autoSkillModDetail(char), name);
+  const other = otherSkillMod(char, name);
+  const lvl = char.skills[name] || 0;
+  const total = (eff[sk.stat] || 5) + lvl + gear + other;
+  const active = lvl > 0 || gear !== 0 || other !== 0;
+  document.querySelectorAll('[data-skill-total]').forEach(el => {
+    if (el.getAttribute('data-skill-total') !== name) return;
+    // Views that dim untrained skills opt in with data-skill-total-blank
+    el.textContent = (active || !el.hasAttribute('data-skill-total-blank')) ? total : '—';
+    el.style.fontWeight = (gear || other) ? '800' : '';
+    el.style.color = (gear || other) ? 'var(--green)' : 'var(--gold)';
+  });
+}
+
 function effectiveStats(c) {
   const eff = { ...c.stats };
   const notes = [];
@@ -2046,17 +2159,47 @@ function renderNomadNote() {
 // ── Role Ability sub-allocation (Tech/Maker, Medtech/Medicine) ───────
 function ensureRoleSubRanks() { if (!char.roleSubRanks) char.roleSubRanks = {}; }
 
+// A Rank-up grants 1 Rank in `perRank` DIFFERENT specialties (Maker gives two,
+// Medicine gives one), so the pool is rank × perRank. Either way a single
+// specialty can only ever gain 1 point per Rank-up, so none may exceed the
+// rank — and some specialties carry their own hard cap on top of that.
+function roleSubBudget(cfg, rank) {
+  return { pool: rank * (cfg.perRank || 1), cap: rank };
+}
+
+function roleSubCap(cfg, rank, subName) {
+  const entry = cfg.subs.find(([name]) => name === subName);
+  const hardMax = entry && entry[2] && entry[2].max;
+  return Math.min(rank, hardMax === undefined ? Infinity : hardMax);
+}
+
 function setRoleSubRank(sub, val, rerender) {
   ensureRoleSubRanks();
   const cfg = CPRED_DATA.roleSubAbilities[char.role];
   if (!cfg) return;
   const rank = char.roleAbilityRank || 4;
-  let v = Math.max(0, parseInt(val) || 0);
+  const { pool } = roleSubBudget(cfg, rank);
+  let v = Math.min(roleSubCap(cfg, rank, sub), Math.max(0, parseInt(val) || 0));
   const otherUsed = cfg.subs.reduce((t, [name]) => name === sub ? t : t + (char.roleSubRanks[name] || 0), 0);
-  if (v + otherUsed > rank) v = Math.max(0, rank - otherUsed); // can't overspend the rank
+  if (v + otherUsed > pool) v = Math.max(0, pool - otherUsed); // can't overspend the pool
   char.roleSubRanks[sub] = v;
   saveToLocalStorage();
   if (rerender && typeof window[rerender] === 'function') window[rerender]();
+}
+
+// ── Medtech: skills granted by the Medicine Specialties (Corebook pg. 149) ──
+// Surgery Skill = 2 per Surgery point; Medical Tech Skill = Pharmaceuticals
+// points + Cryosystem Operation points. Both cap at 10.
+function medtechDerived(c) {
+  const t = CPRED_DATA.medtechTables;
+  const pts = n => (c.roleSubRanks && parseInt(c.roleSubRanks[n])) || 0;
+  const surgeryPts = pts('Surgery'), pharmaPts = pts('Pharmaceuticals'), cryoPts = pts('Cryosystem Operation');
+  return {
+    surgeryPts, pharmaPts, cryoPts,
+    surgerySkill: Math.min(t.surgerySkillMax, surgeryPts * t.surgerySkillPerPoint),
+    surgeryCapped: surgeryPts * t.surgerySkillPerPoint > t.surgerySkillMax,
+    medicalTechSkill: Math.min(t.medicalTechSkillMax, pharmaPts + cryoPts)
+  };
 }
 
 // Renders the allocation grid; `rerender` is the global fn name to refresh after edits
@@ -2065,22 +2208,109 @@ function roleSubAllocHTML(rerender) {
   if (!cfg) return '';
   ensureRoleSubRanks();
   const rank = char.roleAbilityRank || 4;
+  const { pool } = roleSubBudget(cfg, rank);
   const used = cfg.subs.reduce((t, [name]) => t + (char.roleSubRanks[name] || 0), 0);
-  const remaining = rank - used;
+  const remaining = pool - used;
   const remColor = remaining < 0 ? 'var(--red)' : remaining > 0 ? 'var(--gold)' : 'var(--green)';
   return `
-    <div class="section-label" style="margin-top:14px">Distribute ${cfg.ability} Rank (${rank} points) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div class="section-label" style="margin-top:14px">Distribute ${cfg.ability} Specialty Ranks (${pool} point${pool === 1 ? '' : 's'} at ${cfg.ability} Rank ${rank}) — <span style="color:${remColor}">${remaining} remaining</span></div>
     <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.6;margin:4px 0 8px">${cfg.note}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      ${cfg.subs.map(([name, desc]) => `
+      ${cfg.subs.map(([name, desc, opts]) => {
+        const subCap = roleSubCap(cfg, rank, name);
+        const hardMax = opts && opts.max;
+        return `
         <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${name}</span>
-            <input type="number" min="0" max="${rank}" value="${char.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${(opts && opts.label) || name}</span>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <span style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)" title="Most you can put here${hardMax !== undefined ? ` — this Specialty is capped at ${hardMax} by the rules` : ''}">max ${subCap}</span>
+              <input type="number" min="0" max="${subCap}" value="${char.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+            </div>
           </div>
           <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5">${desc}</div>
-        </div>`).join('')}
+        </div>`; }).join('')}
+    </div>
+    ${char.role === 'Medtech' ? medtechMedicineHTML(rerender) : ''}`;
+}
+
+// ── Medtech Medicine detail: granted skills + the three Specialty tables ────
+function medtechMedicineHTML(rerender) {
+  const t = CPRED_DATA.medtechTables;
+  const d = medtechDerived(char);
+  const owned = Array.isArray(char.medtechDrugs) ? char.medtechDrugs : [];
+  const th = 'text-align:left;padding:4px 8px;font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;border-bottom:1px solid var(--border)';
+  const td = 'padding:5px 8px;border-bottom:1px solid rgba(42,42,69,0.5);font-family:\'Share Tech Mono\',monospace;font-size:10px;color:#b0b0c8;line-height:1.5;vertical-align:top';
+  const lvlCell = 'padding:5px 8px;border-bottom:1px solid rgba(42,42,69,0.5);font-family:\'Orbitron\',monospace;font-size:11px;font-weight:700;text-align:center;width:34px';
+
+  const skillBox = (label, val, note) => `
+    <div style="background:var(--mid);border:1px solid ${val > 0 ? 'var(--neon)' : 'var(--border)'};border-radius:4px;padding:8px 10px;flex:1;min-width:180px">
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px">${label}</div>
+      <div style="font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:${val > 0 ? 'var(--neon)' : 'var(--dim)'}">${val}</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.5;margin-top:2px">${note}</div>
     </div>`;
+
+  return `
+    <div class="section-label" style="margin-top:14px">Skills Granted By Your Specialties</div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-bottom:6px">Surgery and Medical Tech are Medtech-only TECH Skills — you get them from this Role Ability, not from your skill list. Roll TECH + the skill below + 1d10.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${skillBox('Surgery Skill', d.surgerySkill, `${d.surgeryPts} Surgery point${d.surgeryPts === 1 ? '' : 's'} × ${t.surgerySkillPerPoint}${d.surgeryCapped ? ` — capped at ${t.surgerySkillMax}, further points add nothing` : ` (max ${t.surgerySkillMax})`}`)}
+      ${skillBox('Medical Tech Skill', d.medicalTechSkill, `Pharmaceuticals ${d.pharmaPts} + Cryosystem ${d.cryoPts} (max ${t.medicalTechSkillMax})`)}
+    </div>
+
+    <div class="section-label" style="margin-top:14px">Surgery — Skill Gained Per Point</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th}">Points In Surgery</th>${[1,2,3,4,5].map(n => `<th style="${th};text-align:center">${n}</th>`).join('')}</tr></thead>
+      <tbody><tr><td style="${td}">Surgery Skill Level</td>
+        ${[1,2,3,4,5].map(n => {
+          const v = Math.min(t.surgerySkillMax, n * t.surgerySkillPerPoint);
+          const here = d.surgeryPts === n;
+          return `<td style="${lvlCell};color:${here ? 'var(--neon)' : 'var(--muted)'};background:${here ? 'rgba(0,229,255,0.08)' : 'transparent'}">${v}</td>`;
+        }).join('')}
+      </tr></tbody>
+    </table>
+
+    <div class="section-label" style="margin-top:14px">Medical Tech (Pharmaceuticals) — ${d.pharmaPts} point${d.pharmaPts === 1 ? '' : 's'}, <span style="color:${owned.length > d.pharmaPts ? 'var(--red)' : 'inherit'}">${owned.length}/${d.pharmaPts} unlocked${owned.length > d.pharmaPts ? ' — more unlocked than points spent, untick some' : ''}</span></div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.6;margin-bottom:6px">${t.pharmaNotes.map(n => '• ' + n).join('<br>')}</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th};width:26px"></th><th style="${th};width:110px">Pharmaceutical</th><th style="${th}">Effect</th></tr></thead>
+      <tbody>
+        ${t.pharmaceuticals.map(p => {
+          const has = owned.includes(p.name);
+          const full = !has && owned.length >= d.pharmaPts;
+          return `<tr style="${has ? 'background:rgba(0,229,255,0.05)' : ''}">
+            <td style="${td};text-align:center"><input type="checkbox" ${has ? 'checked' : ''} ${full ? 'disabled' : ''}
+              title="${full ? 'You have unlocked as many as your Pharmaceuticals points allow' : 'Each point in Pharmaceuticals unlocks one'}"
+              style="cursor:${full ? 'not-allowed' : 'pointer'}" onchange="toggleMedtechDrug('${p.name}', '${rerender || ''}')"></td>
+            <td style="${td};color:${has ? 'var(--neon)' : 'var(--muted)'};font-weight:${has ? '700' : '400'}">${p.name}</td>
+            <td style="${td}">${p.effect}</td></tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+
+    <div class="section-label" style="margin-top:14px">Medical Tech (Cryosystem Operation) — ${d.cryoPts} point${d.cryoPts === 1 ? '' : 's'}</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th};width:44px">Level</th><th style="${th}">Benefit</th></tr></thead>
+      <tbody>
+        ${t.cryosystem.map(r => {
+          const have = d.cryoPts >= r.level;
+          return `<tr style="${have ? 'background:rgba(0,229,255,0.05)' : 'opacity:.55'}">
+            <td style="${lvlCell};color:${have ? 'var(--neon)' : 'var(--dim)'}">${r.level}</td>
+            <td style="${td}">${r.benefit}</td></tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:6px">${t.cryoNote}</div>`;
+}
+
+// Unlock/relock one pharmaceutical, bounded by the points spent in the Specialty
+function toggleMedtechDrug(name, rerender) {
+  if (!Array.isArray(char.medtechDrugs)) char.medtechDrugs = [];
+  const i = char.medtechDrugs.indexOf(name);
+  if (i >= 0) char.medtechDrugs.splice(i, 1);
+  else if (char.medtechDrugs.length < medtechDerived(char).pharmaPts) char.medtechDrugs.push(name);
+  saveToLocalStorage();
+  if (rerender && typeof window[rerender] === 'function') window[rerender]();
 }
 
 function renderRoleAbility() {
@@ -2143,7 +2373,6 @@ function skillSpecInput(name, opts = {}) {
 
 function renderStatsView() {
   const { eff, statMods } = effectiveStats(char);
-  const skillMods = effectiveSkillMods(char);
   const grid = document.getElementById('view-stat-grid');
   grid.innerHTML = CPRED_DATA.stats.map(s => {
     const base = char.stats[s] || 5, e = eff[s] || base;
@@ -2159,24 +2388,27 @@ function renderStatsView() {
   document.getElementById('view-ds').textContent = eff.BODY || 5;
   document.getElementById('view-hum').textContent = currentHumanity(char) + ' / ' + ((char.stats.EMP||5)*10);
 
-  const modList = equipmentModList(char);
+  const modList = equipmentModList(char).concat(roleSkillModList(char));
+  const autoMods = autoSkillModDetail(char);
   const skillsContainer = document.getElementById('view-skills-tables');
-  skillsContainer.innerHTML = (modList.length ? `<div class="gm-note" style="grid-column:1/-1">Active equipment modifiers: ${modList.join(' · ')}</div>` : '') +
+  skillsContainer.innerHTML = (modList.length ? `<div class="gm-note" style="grid-column:1/-1">Active modifiers: ${modList.join(' · ')}</div>` : '') +
     Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
     <div><div class="cs-title" style="margin-bottom:6px">${cat}</div>
-      <table class="skill-table"><thead><tr><th>Skill</th><th>LVL</th><th>STAT</th><th>MOD</th><th>BASE</th></tr></thead><tbody>
+      <table class="skill-table"><thead><tr><th>Skill</th><th>LVL</th><th>STAT</th><th title="Automatic bonuses from equipment and your role ability">MOD</th><th title="Other modifiers — type any bonus or penalty">OTHER</th><th title="STAT + LVL + MOD + OTHER">TOTAL</th></tr></thead><tbody>
         ${skills.map(sk => {
           const lvl = char.skills[sk.name] || 0;
-          const mod = skillMods[sk.name] || 0;
-          const base = (eff[sk.stat] || 5) + lvl + mod;
-          const active = lvl > 0 || mod !== 0;
+          const mod = autoSkillMod(autoMods, sk.name);
+          const other = otherSkillMod(char, sk.name);
+          const base = (eff[sk.stat] || 5) + lvl + mod + other;
+          const active = lvl > 0 || mod !== 0 || other !== 0;
           const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
           return `<tr style="${active ? 'background:rgba(0,229,255,0.04)' : ''}">
             <td class="skill-name" style="${mod !== 0 ? 'color:var(--green);font-weight:800' : lvl > 0 ? 'color:var(--neon)' : ''}">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</td>
             <td style="text-align:center;font-family:'Orbitron',monospace;font-size:11px;color:${lvl>0?'var(--neon)':'var(--dim)'}">${lvl||'—'}</td>
             <td class="skill-stat">${sk.stat}</td>
-            <td style="text-align:center;font-family:'Orbitron',monospace;font-size:11px;color:${mod>0?'var(--green)':mod<0?'var(--red)':'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '—'}</td>
-            <td class="skill-base" style="${mod !== 0 ? 'font-weight:800;color:var(--green)' : ''}">${active ? base : '—'}</td></tr>`;
+            <td title="${autoSkillModWhy(autoMods, sk.name)}" style="text-align:center;font-family:'Orbitron',monospace;font-size:11px;color:${mod>0?'var(--green)':mod<0?'var(--red)':'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '—'}</td>
+            <td style="text-align:center">${otherModInput(sk.name)}</td>
+            <td class="skill-base" data-skill-total="${sk.name}" data-skill-total-blank="1" style="${(mod !== 0 || other !== 0) ? 'font-weight:800;color:var(--green)' : ''}">${active ? base : '—'}</td></tr>`;
         }).join('')}
       </tbody></table></div>`).join('');
   document.getElementById('view-role-ability').textContent = CPRED_DATA.roleAbilities[char.role] || '—';
@@ -2326,9 +2558,12 @@ function renderSessionTracker() {
   grid.innerHTML = inSession.map(c => sessionCard(c)).join('');
 }
 
+// Ids arrive from markup as strings but older sessions stored numbers —
+// compare as strings so a character is never added to the session twice.
 function toggleSessionChar(id) {
-  if (sessionCharIds.includes(id)) sessionCharIds = sessionCharIds.filter(x => x !== id);
-  else sessionCharIds.push(id);
+  const key = String(id);
+  if (sessionCharIds.some(x => String(x) === key)) sessionCharIds = sessionCharIds.filter(x => String(x) !== key);
+  else sessionCharIds.push(key);
   localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds));
   renderSessionTracker();
 }
@@ -2361,6 +2596,7 @@ function sessionCard(c, order) {
         <button class="btn btn-xs btn-ghost" title="Roll 1d10 + REF" onclick="sessRollInit('${c.id}')">🎲</button>
         <button class="btn btn-xs btn-outline" title="View / edit the full character sheet" onclick="sessOpenSheet('${c.id}')">Sheet</button>
         <button class="btn btn-xs btn-ghost" title="Save this character sheet to a folder of your choosing" onclick="sessSaveToFolder('${c.id}')">Save↓</button>
+        <button class="btn btn-xs" style="color:var(--red);border:1px solid rgba(255,23,68,0.4);background:rgba(255,23,68,0.1)" title="Remove from this session — the character sheet is kept" onclick="removeFromSession('${c.id}')">✕</button>
         ${c.portrait ? `<img src="${c.portrait}" style="width:32px;height:32px;border-radius:4px;object-fit:cover">` : ''}
       </div>
     </div>
@@ -2549,13 +2785,14 @@ function sheetEdit(path, value, isNum) {
 
 function sheetEditSkill(name, value) {
   char.skills[name] = parseInt(value) || 0;
+  updateSkillTotalCells(name);
   saveToLocalStorage();
 }
 
 function renderFullSheet() {
   const el = document.getElementById('full-sheet-view');
   const { eff, notes, statMods } = effectiveStats(char);
-  const skillMods = effectiveSkillMods(char);
+  const autoMods = autoSkillModDetail(char);
   const hp = 10 + 5 * (eff.BODY || 5);
   const hl = totalHL(char);
   const hum = currentHumanity(char);
@@ -2591,7 +2828,7 @@ function renderFullSheet() {
       </div>
     </div>
 
-    ${(() => { const ml = equipmentModList(char); return ml.length ? `<div class="gm-note" style="margin-bottom:12px">Equipment modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
+    ${(() => { const ml = equipmentModList(char).concat(roleSkillModList(char)); return ml.length ? `<div class="gm-note" style="margin-bottom:12px">Modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div class="cs-section">
@@ -2634,26 +2871,38 @@ function renderFullSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Skills — every level editable · MOD = equipment bonus (bold = modified)</div>
+      <div class="cs-title">Skills — LVL and OTHER editable · MOD = automatic equipment + role bonuses (hover it for the breakdown)</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
         ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
-          <div><div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">${cat}</div>
+          <div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">${cat}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;color:var(--dim);padding-bottom:2px">
+              <span>SKILL</span>
+              <span style="display:flex;align-items:center;gap:4px">
+                <span style="width:34px;text-align:center">LVL</span>
+                <span style="min-width:20px;text-align:right">MOD</span>
+                <span style="width:38px;text-align:center">OTHER</span>
+                <span style="min-width:22px;text-align:right">TOTAL</span>
+              </span>
+            </div>
             ${skills.map(sk => {
               const lvl = char.skills[sk.name]||0;
-              const mod = skillMods[sk.name] || 0;
-              const base = (eff[sk.stat]||5) + lvl + mod;
-              const active = lvl > 0 || mod !== 0;
+              const mod = autoSkillMod(autoMods, sk.name);
+              const other = otherSkillMod(char, sk.name);
+              const base = (eff[sk.stat]||5) + lvl + mod + other;
+              const active = lvl > 0 || mod !== 0 || other !== 0;
               const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
               return `<div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;padding:1px 0;border-bottom:1px solid rgba(42,42,69,0.4);${active?'background:rgba(0,229,255,0.04)':''}">
-                <span style="${mod!==0?'color:var(--green);font-weight:800':lvl>0?'color:var(--neon)':''};overflow:hidden;max-width:48%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+                <span style="${mod!==0?'color:var(--green);font-weight:800':lvl>0?'color:var(--neon)':''};overflow:hidden;max-width:40%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <input type="number" min="0" max="10" value="${lvl}" style="width:34px;text-align:center;background:var(--mid);border:1px solid var(--border);border-radius:2px;color:var(--neon);font-size:10px;padding:1px" oninput="sheetEditSkill('${sk.name.replace(/'/g,"\\'")}', this.value)" onchange="renderFullSheet()">
-                  <span title="Equipment MOD" style="min-width:20px;text-align:right;color:${mod>0?'var(--green)':mod<0?'var(--red)':'var(--dim)'}">${mod?(mod>0?'+'+mod:mod):'·'}</span>
-                  <span style="min-width:22px;text-align:right;${mod!==0?'font-weight:800;color:var(--green)':'color:var(--gold)'}">${active?base:'—'}</span>
+                  <span title="${autoSkillModWhy(autoMods, sk.name)}" style="min-width:20px;text-align:right;color:${mod>0?'var(--green)':mod<0?'var(--red)':'var(--dim)'}">${mod?(mod>0?'+'+mod:mod):'·'}</span>
+                  ${otherModInput(sk.name)}
+                  <span data-skill-total="${sk.name}" data-skill-total-blank="1" style="min-width:22px;text-align:right;${(mod!==0||other!==0)?'font-weight:800;color:var(--green)':'color:var(--gold)'}">${active?base:'—'}</span>
                 </span></div>`;
             }).join('')}</div>`).join('')}
       </div>
-      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is the total stat/skill bonus from equipment. BASE = effective STAT + level + MOD.</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is worked out for you from equipment and your role ability (a Tech's Field Expertise, for instance) — hover a MOD value to see what it is made of. OTHER is anything the sheet can't know about (temporary buffs, wound penalties, or backing out a bonus that doesn't apply to this roll). TOTAL = effective STAT + LVL + MOD + OTHER — the number you roll against.</div>
     </div>
 
     <div class="cs-section">
@@ -2821,11 +3070,38 @@ if (ipc) {
 }
 
 // ── FOLDER STORE INTEGRATION ───────────────────────────────────────
-// Every character save also writes to the pcs folder; localStorage stays as cache.
+// The character folders are the real store; localStorage stays as a cache for
+// browser-mode previews. A character belongs to exactly one folder — the one
+// it was loaded from (_kind), defaulting to pcs — so it can never end up as
+// both a pcs file and an npcs file.
 const _origSaveToLocalStorage = saveToLocalStorage;
+const _storeSaveTimers = {};   // one pending folder write per character id
+
+// Sheets save on every keystroke; coalesce those into one folder write so the
+// store isn't rewritten dozens of times while a name is being typed. Timers
+// are per character so switching sheets never drops a pending save.
+function queueStoreSave(kind, c) {
+  const key = String(c.id);
+  clearTimeout(_storeSaveTimers[key]);
+  _storeSaveTimers[key] = setTimeout(() => {
+    delete _storeSaveTimers[key];
+    callIPC('store-save', kind, c).then(r => {
+      if (r && r.success) { c._kind = kind; if (r.file) c._file = r.file; }
+    });
+  }, 500);
+}
+
+function cancelQueuedStoreSave(id) {
+  const key = String(id);
+  clearTimeout(_storeSaveTimers[key]);
+  delete _storeSaveTimers[key];
+}
+
 saveToLocalStorage = function() {
+  const kind = (char && (char._kind === 'npcs' ? 'npcs' : char._kind === 'pcs' ? 'pcs' : null));
+  if (ipc && char && kind) { queueStoreSave(kind, char); return; }
   _origSaveToLocalStorage();
-  if (ipc && char && char.name) callIPC('store-save', 'pcs', char);
+  if (ipc && char && char.name) queueStoreSave('pcs', char);
 };
 
 // One-time migration of existing localStorage characters into the pcs folder
@@ -3309,6 +3585,15 @@ document.addEventListener('DOMContentLoaded', () => setTimeout(injectManualNPCFo
 let customFolderChars = [];
 let customFolderPath = '';
 let sessionAutoTimer = null;
+// Permanent character deletion is hidden behind this toggle so the tracker's
+// everyday controls only ever add/remove characters from the current session.
+let sessManageMode = false;
+
+function sessToggleManage() {
+  sessManageMode = !sessManageMode;
+  sessDeleteArmed = null;
+  renderSessionTracker();
+}
 
 async function folderChars() {
   if (!ipc) { refreshSavedChars(); return savedChars.map(c => ({ ...c, _kind: 'pcs' })); }
@@ -3347,16 +3632,22 @@ async function renderSessionTracker() {
       <button class="btn btn-outline btn-sm" onclick="sessRollInitAll()">🎲 Roll Initiative (All)</button>
       <button class="btn btn-ghost btn-sm" onclick="sessClearInitAll()">Clear Initiative</button>
       ${dups.length ? `<button class="btn btn-gold btn-sm" onclick="sessDedupe()" title="Remove duplicate characters/NPCs, keeping the newest of each">🧹 Dedupe (${dups.length})</button>` : ''}
+      <button class="btn ${sessManageMode ? 'btn-red' : 'btn-ghost'} btn-sm" onclick="sessToggleManage()" title="Show controls that permanently delete a character from the character folders">${sessManageMode ? '✔ Done Managing' : '⚙ Manage Characters'}</button>
       ${customFolderPath ? `<span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);align-self:center">Custom: ${customFolderPath}</span>` : ''}
     </div>
-    <div style="width:100%;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-bottom:6px">✓ = in session · ✕ = remove from session · 🗑 = delete from pool (click twice)</div>` +
+    <div style="width:100%;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-bottom:6px">Click a name to add/remove it from this session · ✕ = remove from the session (the character is kept)${sessManageMode ? ' · <span style="color:var(--red)">🗑 = permanently delete the character file (click twice)</span>' : ''}</div>` +
     (unique.length ? unique.map(c => {
       const inSession = inSessionSet.has(String(c.id));
       const tag = c.isNPC || c._kind === 'npcs' ? '<span class="badge badge-red" style="margin-left:4px">NPC</span>' : '<span class="badge badge-neon" style="margin-left:4px">PC</span>';
-      const armed = sessDeleteArmed === c.id;
-      const trash = `<button class="btn btn-sm" style="background:${armed ? 'var(--red)' : 'rgba(255,23,68,0.1)'};color:${armed ? '#fff' : 'var(--red)'};border:1px solid rgba(255,23,68,0.4);border-left:none;border-top-left-radius:0;border-bottom-left-radius:0;padding:0 8px" title="Delete from pool (click twice to confirm)" onclick="sessArmDelete('${c.id}')">${armed ? 'Delete?' : '🗑'}</button>`;
-      const nameBtn = `<button class="btn ${inSession ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-top-right-radius:0;border-bottom-right-radius:0" onclick="toggleSessionChar('${c.id}')">${inSession ? '✓ ' : '+ '}${c.name || 'Unnamed'}${tag}</button>`;
-      const removeBtn = inSession ? `<button class="btn btn-sm" style="background:rgba(255,23,68,0.15);color:var(--red);border:1px solid rgba(255,23,68,0.4);border-left:none;border-radius:0;padding:0 8px" title="Remove from session" onclick="removeFromSession('${c.id}')">✕</button>` : '';
+      const armed = String(sessDeleteArmed) === String(c.id);
+      // Permanent deletion only shows in Manage mode — the everyday red button
+      // beside a name must never destroy a character sheet.
+      const trash = sessManageMode
+        ? `<button class="btn btn-sm" style="background:${armed ? 'var(--red)' : 'rgba(255,23,68,0.1)'};color:${armed ? '#fff' : 'var(--red)'};border:1px solid rgba(255,23,68,0.4);border-left:none;border-top-left-radius:0;border-bottom-left-radius:0;padding:0 8px" title="Permanently delete this character (click twice to confirm)" onclick="sessArmDelete('${c.id}')">${armed ? 'Delete?' : '🗑'}</button>`
+        : '';
+      const roundRight = inSession || trash ? 'border-top-right-radius:0;border-bottom-right-radius:0' : '';
+      const nameBtn = `<button class="btn ${inSession ? 'btn-primary' : 'btn-ghost'} btn-sm" style="${roundRight}" title="${inSession ? 'Remove from session' : 'Add to session'}" onclick="toggleSessionChar('${c.id}')">${inSession ? '✓ ' : '+ '}${c.name || 'Unnamed'}${tag}</button>`;
+      const removeBtn = inSession ? `<button class="btn btn-sm" style="background:rgba(255,23,68,0.15);color:var(--red);border:1px solid rgba(255,23,68,0.4);border-left:none;${trash ? 'border-radius:0' : 'border-top-left-radius:0;border-bottom-left-radius:0'};padding:0 8px" title="Remove from session (the character is kept)" onclick="removeFromSession('${c.id}')">✕</button>` : '';
       return `<span style="display:inline-flex;align-items:stretch;margin:0 4px 4px 0">${nameBtn}${removeBtn}${trash}</span>`;
     }).join('') : '<div style="font-family:Share Tech Mono,monospace;font-size:11px;color:var(--dim)">No characters found — create PCs in Characters, NPCs in NPC Generator</div>');
 
@@ -3433,7 +3724,7 @@ function sessSetInit(id, value) {
 
 async function sessRollInitAll() {
   const all = await folderChars();
-  const inSession = all.filter(c => sessionCharIds.includes(c.id));
+  const inSession = all.filter(c => sessionCharIds.some(x => String(x) === String(c.id)));
   for (const c of inSession) {
     const ref = (c.stats && c.stats.REF) || 5;
     await sessMutate(c.id, x => { x.initiative = Math.floor(Math.random() * 10) + 1 + ref; });
@@ -3442,7 +3733,7 @@ async function sessRollInitAll() {
 
 async function sessClearInitAll() {
   const all = await folderChars();
-  const inSession = all.filter(c => sessionCharIds.includes(c.id));
+  const inSession = all.filter(c => sessionCharIds.some(x => String(x) === String(c.id)));
   for (const c of inSession) await sessMutate(c.id, x => { x.initiative = null; });
 }
 
@@ -3492,8 +3783,9 @@ async function deleteCharFromPool(c) {
   if (!c) return;
   sessionCharIds = sessionCharIds.filter(x => String(x) !== String(c.id));
   localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds));
-  if (ipc && (c._kind === 'pcs' || c._kind === 'npcs') && c._file) {
-    await callIPC('store-delete', c._kind, c._file);
+  if (ipc && (c._kind === 'pcs' || c._kind === 'npcs')) {
+    // Delete by id so every copy goes, whatever the file is called
+    await callIPC('store-delete', c._kind, c.id);
   } else if (c._kind === 'custom') {
     customFolderChars = customFolderChars.filter(x => String(x.id) !== String(c.id));
   } else {
@@ -3519,7 +3811,7 @@ async function sessDeleteChar(id) {
   const c = all.find(x => String(x.id) === String(id));
   if (!c) return;
   await deleteCharFromPool(c);
-  notify(`Removed "${c.name || 'Unnamed'}" from the pool`, 'success');
+  notify(`Deleted "${c.name || 'Unnamed'}" permanently`, 'success');
   renderSessionTracker();
 }
 
@@ -3679,6 +3971,8 @@ function buildNPCCharFromText() {
 }
 
 async function saveNPC() {
+  // Saving the same generated NPC twice must update one file, not mint a second
+  if (window._lastSavedNPCId) { notify('Already saved to the npcs folder', ''); return window._lastSavedNPCId; }
   const npc = buildNPCCharFromText();
   if (!npc) return;
   if (ipc) {

@@ -235,7 +235,8 @@ input[type=number]{text-align:center}
     <button class="tb-btn" id="host-btn" onclick="toggleHost()" style="color:var(--gold);border-color:rgba(255,214,0,0.4)">Host Session</button>
     <button class="tb-btn" onclick="newCharacter()">+ New</button>
     <button class="tb-btn" onclick="loadCharacter()">Load</button>
-    <button class="tb-btn primary" onclick="saveCharacter()">Save</button>
+    <button class="tb-btn primary" onclick="saveCharacter()" title="Save to this character's file in the app's character folder">Save</button>
+    <button class="tb-btn" onclick="exportCharacterFile()" title="Export a portable .cpred copy somewhere else">Export</button>
     <button class="tb-btn" onclick="exportPDF()">PDF</button>
     <button class="tb-btn" onclick="exportJSON()">JSON</button>
     <button class="tb-btn" onclick="printChar()">Print</button>

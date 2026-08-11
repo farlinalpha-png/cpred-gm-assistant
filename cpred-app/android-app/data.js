@@ -624,8 +624,8 @@ CPRED_DATA.vehicleUpgrades = [
 CPRED_DATA.roleAbilityDetails = {
   Solo: { name: "Combat Awareness", how: "Each turn, as a free action, distribute a pool of points equal to your Rank among combat modes: Initiative Reaction (+Initiative), Damage Deflection (subtract from incoming damage), Precision Attack (+Aimed Shot), Spot Weakness (+damage), Threat Detection (can't be surprised at Rank 4+ allocation).", ranks: "Rank = points to distribute each turn. Reallocate at the start of your turn. Higher rank means splitting across several modes or maxing one." },
   Netrunner: { name: "Interface", how: "Interface Rank governs everything in the NET: NET Actions per Meat turn (Rank 1-3: 2 actions, 4-6: 3, 7+: 4 with 8+ allowing 3 while moving), and it adds to Speed, Attack, Defense, and Pathfinder checks with your Cyberdeck.", ranks: "Rank is added to all Netrunning checks. Programs and Black ICE are defeated by reducing REZ to 0." },
-  Tech: { name: "Maker", how: "Split Rank points between four specialties: Field Expertise (repair bonus), Upgrade Expertise (improve items - add a feature or quality tier), Fabrication Expertise (build items from scratch), Invention Expertise (invent new items). Each specialty level unlocks bigger jobs and grants its level as a bonus to those checks.", ranks: "Points allocated at character creation and each Rank up. Upgrading gear typically takes materials worth 50% of item price and a Maker check vs the item DV." },
-  Medtech: { name: "Medicine", how: "Split Rank points between: Surgery (treat Critical Injuries requiring surgery, stabilize the dying), Pharmaceuticals (craft drugs and antidotes), Cryosystem Operation (run cryopumps and cryotanks to keep the nearly-dead alive).", ranks: "Surgery level gates which Critical Injuries you can treat. A Medtech is the only way to bring someone back from Mortally Wounded outside a hospital." },
+  Tech: { name: "Maker", how: "A Tech can fix, improve, modify, make, and invent items with Maker. Every time your Maker Rank goes up by 1 you gain 1 Rank in TWO different Maker Specialties of your choice: Field Expertise (add your Rank in it to Basic Tech, Cybertech, Electronics/Security Tech, Weaponstech, and Land/Sea/Air Vehicle Tech checks made for any non-Maker purpose), Upgrade Expertise (improve items — add a feature or quality tier), Fabrication Expertise (build items from scratch), Invention Expertise (invent new items).", ranks: "Two Specialty Ranks per Maker Rank, and no single Specialty can exceed your Maker Rank — so at Maker Rank 4 you have 8 Specialty Ranks to place, max 4 in any one. Upgrading gear typically takes materials worth 50% of item price and a Maker check vs the item DV." },
+  Medtech: { name: "Medicine", how: "Medtechs keep people alive who should be dead. Whenever your Medicine Rank increases, you choose ONE of three Medicine Specialties — Surgery, Medical Tech (Pharmaceuticals), or Medical Tech (Cryosystem Operation) — and allocate 1 point to it. Surgery gives 2 points of the Surgery Skill per point; Pharmaceuticals and Cryosystem Operation each give 1 point of the Medical Tech Skill per point, and both feed the same skill.", ranks: "One Specialty point per Medicine Rank — at Medicine Rank 4 you have 4 points. Pharmaceuticals and Cryosystem Operation are capped at 5 points each. The Medical Section (pg. 226) has extra uses of the Surgery and Medical Tech Skills that only Medtechs get through this Role Ability: cyberware installation and harvesting, Bodysculpting, and Therapy." },
   Media: { name: "Credibility", how: "Rank determines the strength of the stories you can break and be believed, and gives access to sources, archives, and venues. Use it to convince the public, expose corruption, or call in journalistic favors.", ranks: "Rank 4: local audiences believe you. Rank 7: citywide stories stick. Rank 10: you can take down governments or megacorp divisions with an expose." },
   Exec: { name: "Teamwork", how: "You have corporate resources and a team. Rank determines the number and loyalty of team members (bodyguard, driver, netrunner, assistant, etc.) plus housing, extraction coverage, and corporate perks - and how big a favor you can requisition.", ranks: "Higher rank = more team members with higher skill bases, and better corporate cover when operations go loud." },
   Fixer: { name: "Operator", how: "Buy and sell through the underground. Rank sets what price categories of goods you can source (including illegal gear), lets you find buyers or sellers for nearly anything, and adds Rank to Trading checks in your network. You also maintain a contact web.", ranks: "Rank 4: source Expensive goods reliably. Rank 7: Very Expensive and restricted military gear. Rank 10: if it exists in Night City, you can get it." },
@@ -642,9 +642,10 @@ CPRED_DATA.roleAbilityDetails = {
 CPRED_DATA.roleSubAbilities = {
   Tech: {
     ability: "Maker",
-    note: "Distribute your Maker Rank among these four specialties. Each specialty adds its level as a bonus to those checks and gates the size of job you can attempt.",
+    perRank: 2,   // each Maker Rank grants 1 Rank in TWO different Specialties
+    note: "Each time your Maker Rank goes up by 1 you gain 1 Rank in two different Specialties, so you have twice your Maker Rank to spend — and because a single Rank-up can only ever give one Rank to any one Specialty, no Specialty can exceed your Maker Rank.",
     subs: [
-      ["Field Expertise", "Repair and jury-rig existing tech"],
+      ["Field Expertise", "Repair and jury-rig tech in the field. Adds its Rank to Basic Tech, Cybertech, Electronics/Security Tech, Weaponstech and Land/Sea/Air Vehicle Tech checks made for any non-Maker purpose — the sheet applies this automatically."],
       ["Upgrade Expertise", "Improve items — add a feature or raise quality tier"],
       ["Fabrication Expertise", "Build items from scratch"],
       ["Invention Expertise", "Invent entirely new items"]
@@ -652,13 +653,65 @@ CPRED_DATA.roleSubAbilities = {
   },
   Medtech: {
     ability: "Medicine",
-    note: "Distribute your Medicine Rank among these three areas. Surgery level gates which Critical Injuries you can treat.",
+    // Corebook pg. 149: "Whenever the Medtech increases their Medicine Rank,
+    // they also choose ONE of the following three Medicine Specialties ... to
+    // allocate 1 point to." One point per Rank — NOT two like Maker.
+    perRank: 1,
+    note: "Each time your Medicine Rank goes up by 1 you choose one of the three Specialties below and put 1 point into it — so you have exactly your Medicine Rank in points to spend (Corebook pg. 149).",
     subs: [
-      ["Surgery", "Treat Critical Injuries needing surgery; stabilize the dying"],
-      ["Pharmaceuticals", "Craft drugs and antidotes"],
-      ["Cryosystem Operation", "Run cryopumps and cryotanks to hold the near-dead"]
+      ["Surgery", "Every point gives you 2 points of the Surgery Skill (to a maximum of 10). Surgery is the TECH Skill used to treat the most severe Critical Injuries and to implant cyberware, and is only available to Medtechs through this Specialty."],
+      ["Pharmaceuticals", "Every point gives you 1 point of the Medical Tech Skill and access to one pharmaceutical from the table below.",
+        { label: "Medical Tech (Pharmaceuticals)", max: 5 }],
+      ["Cryosystem Operation", "Every point gives you 1 point of the Medical Tech Skill and the cryo equipment listed in the table below.",
+        { label: "Medical Tech (Cryosystem Operation)", max: 5 }]
     ]
   }
+};
+
+// Medtech Medicine reference tables — Corebook pg. 149-150.
+CPRED_DATA.medtechTables = {
+  // "For every point you allocate to Surgery, you gain 2 points in the
+  // Surgery Skill (up to a maximum of 10)."
+  surgerySkillPerPoint: 2,
+  surgerySkillMax: 10,
+  // Pharmaceuticals and Cryosystem Operation both feed the same skill:
+  // "Your Medical Tech Skill Level equals your points in Pharmaceuticals
+  // plus your points in CryoSystem Operation."
+  medicalTechSkillMax: 10,
+  pharmaceuticals: [
+    { name: "Antibiotic", effect: "A target who has already started the natural healing process heals an extra 2 Hit Points every day for a week. A person can only benefit from one use of Antibiotic at a time." },
+    { name: "Rapidetox", effect: "A target affected by a drug, poison, or intoxicant is immediately purged of the effects of that substance." },
+    { name: "Speedheal", effect: "A target who is not Mortally Wounded immediately heals HP equal to their BODY + WILL. One use per day." },
+    { name: "Stim", effect: "A target can ignore all penalties from being Seriously Wounded for an hour. One use per day." },
+    { name: "Surge", effect: "A target can function unimpaired without sleep for a full 24 hours. One use per week." }
+  ],
+  pharmaNotes: [
+    "Each point in this Specialty grants access to one pharmaceutical of your choice.",
+    "Synthesis: DV13 Medical Tech Check. A failure wastes the materials. 200eb of materials makes a number of doses equal to your Medical Tech Skill, in 1 hour.",
+    "Applying a dose takes an Action. An unwilling target can be dosed with a Melee Weapon Attack using an Airhypo, which administers the dose on a hit instead of dealing damage.",
+    "Street Drugs cannot be synthesized with this Specialty, and a non-Medtech cannot administer pharmaceuticals correctly."
+  ],
+  cryosystem: [
+    { level: 1, benefit: "You gain one Cryopump." },
+    { level: 2, benefit: "You become a Registered Cryotank Technician and gain unlimited 24/7 access to 1 Cryotank at a time at any cryotank facility operated by medical corporations or government agencies." },
+    { level: 3, benefit: "You gain 1 Cryotank, installed in a room of your choosing." },
+    { level: 4, benefit: "You gain 2 more Cryotanks that fit in the same room as your first, and your Cryopump has 2 charges with a maximum carrying capacity of 2 people in stasis." },
+    { level: 5, benefit: "You gain 3 more Cryotanks that fit in the same room as the first three, and your Cryopump has 3 charges with a maximum carrying capacity of 3 people in stasis." }
+  ],
+  cryoNote: "More information on Cryopumps and Cryotanks is on Corebook pg. 353."
+};
+
+// Role Ability bonuses that land on specific skill checks. Applied
+// automatically wherever a skill total is shown.
+// Tech/Maker — Field Expertise adds its Rank to these Tech skills when the
+// check is made for a NON-Maker purpose (matched by prefix so the "(x2)"
+// suffix on Electronics/Security Tech still resolves).
+CPRED_DATA.roleSkillBonuses = {
+  Tech: [{
+    sub: 'Field Expertise',
+    match: /^(Basic Tech|Cybertech|Electronics\/Security Tech|Weaponstech|Land Vehicle Tech|Sea Vehicle Tech|Air Vehicle Tech)\b/,
+    note: 'non-Maker purposes only'
+  }]
 };
 
 // Stat/skill modifiers applied automatically when the item is installed/equipped

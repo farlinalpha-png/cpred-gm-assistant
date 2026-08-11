@@ -32,12 +32,38 @@ function listDir(dir) {
   } catch (e) { return []; }
 }
 
+// Every file in `dir` that holds this character id. More than one means an
+// older build wrote a second copy (renaming a character used to mint a new
+// filename); saveToDir collapses them back down to one.
+function filesForId(dir, id) {
+  if (id === undefined || id === null || id === '') return [];
+  const want = String(id);
+  try {
+    return fs.readdirSync(dir)
+      .filter(f => f.endsWith('.json') || f.endsWith('.cpred'))
+      .filter(f => {
+        try { return String(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).id) === want; }
+        catch (e) { return false; }
+      });
+  } catch (e) { return []; }
+}
+
+// One file per character, keyed by id. The filename tracks the character's
+// current name, and any other file carrying the same id is removed, so
+// renaming or re-saving never leaves a duplicate sheet behind.
 function saveToDir(dir, char) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!char.id) char.id = String(Date.now());
   char.updatedAt = Date.now();
-  const file = char._file || (safeName(char.name) + '_' + (char.id || Date.now()) + '.json');
+  const file = safeName(char.name) + '_' + char.id + '.json';
+  const out = { ...char };
+  delete out._kind; delete out._file;   // runtime-only routing fields
+  fs.writeFileSync(path.join(dir, file), JSON.stringify(out, null, 2));
+  filesForId(dir, char.id).forEach(f => {
+    if (f === file) return;
+    try { fs.unlinkSync(path.join(dir, f)); } catch (e) { /* already gone */ }
+  });
   char._file = file;
-  fs.writeFileSync(path.join(dir, file), JSON.stringify(char, null, 2));
   return file;
 }
 
@@ -132,9 +158,18 @@ ipcMain.handle('store-save', (e, kind, char) => {
   catch (err) { return { success: false, error: err.message }; }
 });
 
-ipcMain.handle('store-delete', (e, kind, file) => {
-  try { fs.unlinkSync(path.join(kindDir(kind), file)); return { success: true }; }
-  catch (err) { return { success: false, error: err.message }; }
+// Accepts a filename or a character id. Passing the id also sweeps up any
+// stale copies left by older builds, so a delete really does delete.
+ipcMain.handle('store-delete', (e, kind, fileOrId) => {
+  const dir = kindDir(kind);
+  try {
+    const targets = new Set(filesForId(dir, fileOrId));
+    // Only ever a bare filename inside the store — never a path
+    if (typeof fileOrId === 'string' && /\.(json|cpred)$/i.test(fileOrId) && fileOrId === path.basename(fileOrId)) targets.add(fileOrId);
+    if (!targets.size) return { success: false, error: 'character not found' };
+    targets.forEach(f => { try { fs.unlinkSync(path.join(dir, f)); } catch (err) { /* already gone */ } });
+    return { success: true, removed: targets.size };
+  } catch (err) { return { success: false, error: err.message }; }
 });
 
 ipcMain.handle('pick-folder', async () => {
@@ -413,7 +448,6 @@ function startServer(port) {
             if (existing && (existing.updatedAt || 0) > (char.updatedAt || 0)) {
               return json(res, 200, { success: true, kept: 'server', char: existing });
             }
-            if (existing) char._file = existing._file;
             saveToDir(kindDir('pcs'), char);
             if (mainWindow) mainWindow.webContents.send('player-sync', { id: char.id, name: char.name });
             return json(res, 200, { success: true, kept: 'client', updatedAt: char.updatedAt });
