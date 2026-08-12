@@ -3,13 +3,65 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { autoUpdater } = require('electron-updater');
+const drive = require('./drive');
 
 let mainWindow;
 let server = null;
 let serverPort = 8045;
 
+// ── Storage settings ─────────────────────────────────────────────────
+// Three places the character folders can live:
+//   local  — this PC only, under userData (the original behaviour)
+//   folder — any folder the GM picks; point it at Google Drive for Desktop,
+//            Dropbox or a network share and that client does the syncing
+//   drive  — Google Drive over its API, with userData as the working mirror
+//
+// Only the directory changes. Every reader below — the GM's own lists and the
+// host server the player app talks to — keeps hitting the local disk, so
+// nothing about hosting a session gets slower or needs a network.
+const DEFAULT_SETTINGS = { storage: { mode: 'local', folderPath: '' } };
+let settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+
+function settingsFile() { return path.join(app.getPath('userData'), 'settings.json'); }
+
+function loadSettings() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+    settings = { ...DEFAULT_SETTINGS, ...raw, storage: { ...DEFAULT_SETTINGS.storage, ...(raw.storage || {}) } };
+  } catch (e) { settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); }
+  // A custom folder that has gone away (unplugged drive, uninstalled Drive for
+  // Desktop) must not silently become "no characters" — fall back to local and
+  // say so rather than writing sheets into a path that isn't there.
+  if (settings.storage.mode === 'folder' && !dirUsable(settings.storage.folderPath)) {
+    settings.storage.mode = 'local';
+    settings.storage.folderUnavailable = true;
+  }
+  return settings;
+}
+
+function saveSettings() {
+  try {
+    const out = { ...settings, storage: { ...settings.storage } };
+    delete out.storage.folderUnavailable;   // derived each launch, never stored
+    fs.writeFileSync(settingsFile(), JSON.stringify(out, null, 2));
+    return true;
+  } catch (e) { return false; }
+}
+
+function dirUsable(p) {
+  if (!p) return false;
+  try { return fs.statSync(p).isDirectory(); } catch (e) { return false; }
+}
+
+function storageMode() { return settings.storage.mode || 'local'; }
+function driveMode() { return storageMode() === 'drive'; }
+
 // ── Character store: folders under userData ─────────────────────────
-function storeRoot() { return path.join(app.getPath('userData'), 'characters'); }
+function storeRoot() {
+  const s = settings.storage;
+  if (s.mode === 'folder' && dirUsable(s.folderPath)) return s.folderPath;
+  return path.join(app.getPath('userData'), 'characters');
+}
 function kindDir(kind) { return path.join(storeRoot(), kind === 'npcs' ? 'npcs' : 'pcs'); }
 
 function ensureDirs() {
@@ -64,6 +116,25 @@ function saveToDir(dir, char) {
     try { fs.unlinkSync(path.join(dir, f)); } catch (e) { /* already gone */ }
   });
   char._file = file;
+  return file;
+}
+
+// Like saveToDir, but keeps the character's existing updatedAt instead of
+// stamping "now". Moving a sheet between folders is not an edit to it — if a
+// copy claimed to be fresh, the next Drive sync would let it beat a genuinely
+// newer version saved somewhere else.
+function copyToDir(dir, char) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const out = { ...char };
+  delete out._kind; delete out._file;
+  if (!out.id) out.id = String(Date.now());
+  if (!out.updatedAt) out.updatedAt = Date.now();
+  const file = safeName(out.name) + '_' + out.id + '.json';
+  fs.writeFileSync(path.join(dir, file), JSON.stringify(out, null, 2));
+  filesForId(dir, out.id).forEach(f => {
+    if (f === file) return;
+    try { fs.unlinkSync(path.join(dir, f)); } catch (e) { /* already gone */ }
+  });
   return file;
 }
 
@@ -143,9 +214,33 @@ ipcMain.handle('check-for-updates', async () => {
   }
 });
 
-app.whenReady().then(() => { ensureDirs(); createWindow(); initAutoUpdater(); });
+// ── Drive wiring ─────────────────────────────────────────────────────
+function initDrive() {
+  drive.init({
+    userData: app.getPath('userData'),
+    dirFor: kindDir,
+    onStatus: (s) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('drive-status', s); },
+    // A pull rewrote sheets underneath the UI — tell the renderer to re-read
+    // rather than leaving the GM looking at a stale roster mid-session.
+    onPulled: (n) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('store-changed', { source: 'drive', count: n }); }
+  });
+  if (driveMode()) drive.startAuto();
+}
+
+app.whenReady().then(() => { loadSettings(); ensureDirs(); initDrive(); createWindow(); initAutoUpdater(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (mainWindow === null) createWindow(); });
+
+// Give queued Drive uploads a chance to land before the process goes away, so
+// the last edits of a session are not lost to an un-elapsed debounce.
+let quitting = false;
+app.on('before-quit', (e) => {
+  if (quitting || !driveMode() || !drive.isConnected()) return;
+  e.preventDefault();
+  quitting = true;
+  const bail = setTimeout(() => app.quit(), 4000);   // never hang the quit
+  drive.flushNow().finally(() => { clearTimeout(bail); app.quit(); });
+});
 
 // ── IPC: store ───────────────────────────────────────────────────────
 ipcMain.handle('store-list', (e, kindOrPath) => {
@@ -154,7 +249,13 @@ ipcMain.handle('store-list', (e, kindOrPath) => {
 });
 
 ipcMain.handle('store-save', (e, kind, char) => {
-  try { const f = saveToDir(kindDir(kind), char); return { success: true, file: f }; }
+  try {
+    const f = saveToDir(kindDir(kind), char);
+    // Local write already succeeded; the upload is fire-and-forget so a slow
+    // or absent network never stalls a save.
+    if (driveMode()) drive.queuePush(kind === 'npcs' ? 'npcs' : 'pcs', char);
+    return { success: true, file: f };
+  }
   catch (err) { return { success: false, error: err.message }; }
 });
 
@@ -167,7 +268,17 @@ ipcMain.handle('store-delete', (e, kind, fileOrId) => {
     // Only ever a bare filename inside the store — never a path
     if (typeof fileOrId === 'string' && /\.(json|cpred)$/i.test(fileOrId) && fileOrId === path.basename(fileOrId)) targets.add(fileOrId);
     if (!targets.size) return { success: false, error: 'character not found' };
+    // Read the ids out before the files go, so the matching Drive copies can
+    // be removed too — otherwise the next pull would resurrect the character.
+    const ids = new Set();
+    if (driveMode()) {
+      targets.forEach(f => {
+        try { const c = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); if (c && c.id !== undefined) ids.add(String(c.id)); }
+        catch (err) { /* unreadable — nothing to match remotely */ }
+      });
+    }
     targets.forEach(f => { try { fs.unlinkSync(path.join(dir, f)); } catch (err) { /* already gone */ } });
+    ids.forEach(id => { drive.remove(kind === 'npcs' ? 'npcs' : 'pcs', id).catch(() => {}); });
     return { success: true, removed: targets.size };
   } catch (err) { return { success: false, error: err.message }; }
 });
@@ -196,6 +307,86 @@ ipcMain.handle('save-char-to-folder', async (e, character) => {
 });
 
 ipcMain.handle('open-store-folder', () => { shell.openPath(storeRoot()); return { success: true }; });
+
+// ── IPC: storage location & Google Drive ─────────────────────────────
+function storageInfo() {
+  return {
+    mode: storageMode(),
+    folderPath: settings.storage.folderPath || '',
+    folderUnavailable: !!settings.storage.folderUnavailable,
+    root: storeRoot(),
+    counts: { pcs: listDir(kindDir('pcs')).length, npcs: listDir(kindDir('npcs')).length },
+    drive: drive.status()
+  };
+}
+
+ipcMain.handle('storage-get', () => storageInfo());
+
+ipcMain.handle('storage-set', async (e, next) => {
+  const mode = ['local', 'folder', 'drive'].includes(next && next.mode) ? next.mode : 'local';
+  if (mode === 'folder' && !dirUsable(next.folderPath)) {
+    return { success: false, error: 'That folder could not be found.', info: storageInfo() };
+  }
+  if (mode === 'drive' && !drive.isConfigured()) {
+    return { success: false, error: 'This build has no Google client ID — see DRIVE-SETUP.md.', info: storageInfo() };
+  }
+  settings.storage.mode = mode;
+  if (mode === 'folder') settings.storage.folderPath = next.folderPath;
+  delete settings.storage.folderUnavailable;
+  saveSettings();
+  ensureDirs();
+  if (mode === 'drive') drive.startAuto(); else drive.stopAuto();
+  return { success: true, info: storageInfo() };
+});
+
+// Separate from pick-folder: that one loads characters for a one-off session,
+// this one repoints the store itself.
+ipcMain.handle('pick-store-folder', async () => {
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose the folder to keep characters in',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (!filePaths || !filePaths[0]) return { success: false };
+  return { success: true, dir: filePaths[0] };
+});
+
+// Copies the characters that are here now into whatever folder is about to
+// become the store, so switching locations doesn't look like losing everyone.
+ipcMain.handle('storage-migrate', (e, targetDir) => {
+  try {
+    if (!dirUsable(targetDir)) return { success: false, error: 'That folder could not be found.' };
+    let copied = 0;
+    ['pcs', 'npcs'].forEach(kind => {
+      const dest = path.join(targetDir, kind);
+      if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+      listDir(kindDir(kind)).forEach(c => {
+        // Skip a character already there and not older, so re-running this
+        // after a session can't roll newer sheets backwards.
+        const existing = listDir(dest).find(x => String(x.id) === String(c.id));
+        if (existing && (existing.updatedAt || 0) >= (c.updatedAt || 0)) return;
+        copyToDir(dest, c);
+        copied++;
+      });
+    });
+    return { success: true, copied };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle('drive-status', () => drive.status());
+ipcMain.handle('drive-connect', async () => {
+  const r = await drive.connect();
+  if (r.success) { settings.storage.mode = 'drive'; saveSettings(); ensureDirs(); drive.startAuto(); }
+  return { ...r, info: storageInfo() };
+});
+ipcMain.handle('drive-disconnect', async () => {
+  await drive.disconnect();
+  if (driveMode()) { settings.storage.mode = 'local'; saveSettings(); }
+  return { success: true, info: storageInfo() };
+});
+ipcMain.handle('drive-sync', async () => {
+  const r = await drive.syncNow();
+  return { ...r, info: storageInfo() };
+});
 
 // ── IPC: legacy file save/load/pdf/image (unchanged behavior) ───────
 ipcMain.handle('save-character', async (event, character) => {
@@ -449,6 +640,9 @@ function startServer(port) {
               return json(res, 200, { success: true, kept: 'server', char: existing });
             }
             saveToDir(kindDir('pcs'), char);
+            // A player's edit is a save like any other — push it on to Drive so
+            // the sheet they changed at the table is the one waiting next week.
+            if (driveMode()) drive.queuePush('pcs', char);
             if (mainWindow) mainWindow.webContents.send('player-sync', { id: char.id, name: char.name });
             return json(res, 200, { success: true, kept: 'client', updatedAt: char.updatedAt });
           } catch (e) { return json(res, 400, { error: e.message }); }

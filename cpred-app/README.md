@@ -6,6 +6,7 @@ A complete Cyberpunk RED tabletop RPG desktop application for Windows featuring:
 - **Character Portraits** — Upload images for your characters
 - **Equipment Browsers** — Searchable databases for Weapons, Armor, Cyberware, Gear, and Netrunning programs, all sourced from official Cyberpunk RED DLCs
 - **Save / Load / Export** — Save characters as `.cpred` files, export to PDF or JSON, print character sheets
+- **Storage Anywhere** — Keep characters on this PC, in any folder (a Google Drive for Desktop or Dropbox folder works), or in Google Drive itself with background sync. Hosting and the player app work the same either way — see [DRIVE-SETUP.md](DRIVE-SETUP.md)
 - **Session Tracker** — Live HP, Humanity, wounds, eddies, luck points, critical injuries, and addictions tracking
 - **AI-Powered GM Tools** — NPC Generator, Encounter Generator, and Rules Quick Reference (requires internet)
 - **Bundled Source Files** — All 21 source markdown files included in `assets/source-files/`
@@ -92,6 +93,31 @@ Windows installs are also unsigned (no code-signing cert), so Windows SmartScree
 
 > **Note:** AI features require an internet connection.
 
+### Storage — where characters live (top bar)
+
+Click **Storage** to choose where character and NPC sheets are kept:
+
+- **This PC only** — the app's own folder. No network, no accounts. (Default.)
+- **A folder I choose** — any folder, including `G:\My Drive\…` from Google
+  Drive for Desktop, a Dropbox folder, or a NAS share. That client does the
+  syncing; the app just reads and writes files.
+- **Google Drive** — the app talks to Drive directly, so there's nothing extra
+  to install and you can sign in from any machine. Needs a client ID compiled
+  into the build; see **[DRIVE-SETUP.md](DRIVE-SETUP.md)**.
+
+Switching to a new folder offers to copy the characters you already have into
+it. Nothing is ever deleted by switching.
+
+**Hosting is unchanged, and players never touch Google.** The GM app is the
+only thing that talks to Drive. Players still connect to your app over the
+local network with **Host Session** exactly as before — no account, no sign-in.
+Their edits save to your store and then flow on to Drive like any other save.
+
+Drive mode keeps the local folders as the working copy and syncs in the
+background, so a save never waits on the network and a dead connection at the
+table doesn't stop play. Conflicts resolve newest-wins per character, the same
+rule already used for sheets uploaded from a player's tablet.
+
 ---
 
 ## 📁 Project Structure
@@ -101,11 +127,15 @@ cpred-app/
 ├── BUILD-INSTALLER.bat    ← Build the Windows installer
 ├── RUN-APP.bat            ← Run app directly (testing)
 ├── package.json           ← Build configuration
+├── DRIVE-SETUP.md         ← Google Drive: setup, behaviour, troubleshooting
 ├── src/
-│   └── main.js            ← Electron main process (file I/O, PDF export)
+│   ├── main.js            ← Electron main process (file I/O, host server, PDF)
+│   ├── drive.js           ← Google Drive sync (OAuth + REST, no npm deps)
+│   └── drive-config.js    ← Google client ID — fill in to enable Drive
 ├── public/
 │   ├── index.html         ← Application shell
 │   ├── app.js             ← Application logic
+│   ├── storage-ui.js      ← Storage location dialog
 │   └── data.js            ← Complete gear/lifepath/character database
 └── assets/
     ├── icon.ico           ← App icon

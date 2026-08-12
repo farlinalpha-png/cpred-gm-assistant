@@ -232,6 +232,7 @@ input[type=number]{text-align:center}
   <div id="host-status" style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-left:8px"></div>
   <div class="topbar-actions">
     <button class="tb-btn" id="update-btn" onclick="checkForUpdate()" title="Check GitHub for a newer version and install it">Check for Update</button>
+    <button class="tb-btn" id="storage-btn" onclick="openStorage()" title="Choose where characters and NPCs are saved — this PC, a folder, or Google Drive">Storage</button>
     <button class="tb-btn" id="host-btn" onclick="toggleHost()" style="color:var(--gold);border-color:rgba(255,214,0,0.4)">Host Session</button>
     <button class="tb-btn" onclick="newCharacter()">+ New</button>
     <button class="tb-btn" onclick="loadCharacter()">Load</button>
@@ -942,6 +943,7 @@ input[type=number]{text-align:center}
 </div><!-- /app -->
 
 <script src="app.js"></script>
+<script src="storage-ui.js"></script>
 <script type="module" src="map3d/index.js"></script>
 </body>
 </html>
