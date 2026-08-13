@@ -2871,7 +2871,7 @@ function renderFullSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Skills — LVL and OTHER editable · MOD = automatic equipment + role bonuses (hover it for the breakdown)</div>
+      <div class="cs-title">Skills — STAT is the linked stat, at its effective value · LVL and OTHER editable · MOD = automatic equipment + role bonuses (hover it for the breakdown)</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
         ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
           <div>
@@ -2879,6 +2879,7 @@ function renderFullSheet() {
             <div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;color:var(--dim);padding-bottom:2px">
               <span>SKILL</span>
               <span style="display:flex;align-items:center;gap:4px">
+                <span style="width:44px;text-align:center">STAT</span>
                 <span style="width:34px;text-align:center">LVL</span>
                 <span style="min-width:20px;text-align:right">MOD</span>
                 <span style="width:38px;text-align:center">OTHER</span>
@@ -2892,9 +2893,16 @@ function renderFullSheet() {
               const base = (eff[sk.stat]||5) + lvl + mod + other;
               const active = lvl > 0 || mod !== 0 || other !== 0;
               const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
+              // The linked STAT is the largest term in TOTAL, so it is shown
+              // rather than left in a tooltip — otherwise the number the player
+              // rolls against can't be checked against the sheet. Green when a
+              // modifier moved it, matching the Stats box above.
+              const statVal = eff[sk.stat] || 5;
+              const statModded = (statMods[sk.stat] || 0) !== 0;
               return `<div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;padding:1px 0;border-bottom:1px solid rgba(42,42,69,0.4);${active?'background:rgba(0,229,255,0.04)':''}">
-                <span style="${mod!==0?'color:var(--green);font-weight:800':lvl>0?'color:var(--neon)':''};overflow:hidden;max-width:40%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+                <span style="${mod!==0?'color:var(--green);font-weight:800':lvl>0?'color:var(--neon)':''};overflow:hidden;max-width:34%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
+                  <span class="skill-stat" style="width:44px;text-align:center" title="${sk.name} rolls on ${sk.stat}${statModded?` — ${char.stats[sk.stat]||5} base, ${statVal} after modifiers`:''}">${sk.stat} <span style="color:${statModded?'var(--green)':'var(--neon)'}${statModded?';font-weight:800':''}">${statVal}</span></span>
                   <input type="number" min="0" max="10" value="${lvl}" style="width:34px;text-align:center;background:var(--mid);border:1px solid var(--border);border-radius:2px;color:var(--neon);font-size:10px;padding:1px" oninput="sheetEditSkill('${sk.name.replace(/'/g,"\\'")}', this.value)" onchange="renderFullSheet()">
                   <span title="${autoSkillModWhy(autoMods, sk.name)}" style="min-width:20px;text-align:right;color:${mod>0?'var(--green)':mod<0?'var(--red)':'var(--dim)'}">${mod?(mod>0?'+'+mod:mod):'·'}</span>
                   ${otherModInput(sk.name)}
