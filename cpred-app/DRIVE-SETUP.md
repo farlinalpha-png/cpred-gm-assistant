@@ -122,9 +122,14 @@ own copy:
 3. Add **`GOOGLE_OAUTH_CLIENT_SECRET`** — the same secret
 
 `.github/actions/drive-credentials` writes them back into
-`src/drive-secrets.local.js` at build time, before electron-builder runs. Do
-this *before* pushing a release tag; a build with the secrets missing still
-succeeds, but logs a warning and ships with Drive disabled.
+`src/drive-secrets.local.js` at build time, before electron-builder runs.
+
+Do this *before* pushing a release tag. **A release build with the secrets
+missing fails**, on purpose — v4.2.0's first build went green and produced
+installers with Drive silently absent, which is worse than a red build. The
+error names which secrets the job *could* see, so a typo or a wrong tab is one
+glance to diagnose. It also rejects a value with stray whitespace, or a client
+ID that doesn't end in `.apps.googleusercontent.com`.
 
 Repository secrets are not exposed to forked-PR builds and are masked in logs,
 so this does not put them in front of contributors.

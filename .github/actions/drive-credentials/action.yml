@@ -14,6 +14,12 @@ inputs:
     description: Google OAuth client secret (repo secret GOOGLE_OAUTH_CLIENT_SECRET)
     required: false
     default: ''
+  secrets-json:
+    description: >
+      toJSON(secrets) from the caller, used only to list configured secret NAMES
+      when the expected one is missing. Values are never read or printed.
+    required: false
+    default: '{}'
 
 runs:
   using: composite
@@ -27,6 +33,7 @@ runs:
       env:
         CID: ${{ inputs.client-id }}
         CSEC: ${{ inputs.client-secret }}
+        ALL: ${{ inputs.secrets-json }}
       run: |
         node <<'NODE'
         const fs = require('fs');
@@ -34,18 +41,39 @@ runs:
           CLIENT_ID: process.env.CID || '',
           CLIENT_SECRET: process.env.CSEC || ''
         };
+
+        // Only the key names, never a value. GitHub masks secret values in logs
+        // regardless, but there is no reason to put them near a console at all.
+        const names = () => {
+          try {
+            return Object.keys(JSON.parse(process.env.ALL || '{}'))
+              .filter(k => k.toLowerCase() !== 'github_token').sort().join(', ') || '(none)';
+          } catch (e) { return '(could not read the secrets context)'; }
+        };
+
+        const bail = (msg) => {
+          console.log('::error::' + msg);
+          console.log('::error::Secrets visible to this job: ' + names());
+          console.log('::error::Fix at Settings → Secrets and variables → Actions. They must be under the *Secrets* tab (not Variables — those need vars.*, not secrets.*), added as *Repository* secrets (not Environment, which only resolve in a job declaring `environment:`).');
+          process.exit(1);
+        };
+
+        // A green build that quietly ships without its headline feature is worse
+        // than a red one. v4.2.0 did exactly that, which is why this is fatal.
+        if (!v.CLIENT_ID) bail('GOOGLE_OAUTH_CLIENT_ID is not set, so this build would ship with Google Drive "not configured".');
+        if (!v.CLIENT_SECRET) bail('GOOGLE_OAUTH_CLIENT_SECRET is empty. Google requires both for a Desktop client, so sign-in would fail in the shipped app.');
+
+        // Catch a paste that picked up surrounding whitespace or the wrong field
+        // — cheaper to find here than after publishing an installer.
+        if (v.CLIENT_ID !== v.CLIENT_ID.trim() || v.CLIENT_SECRET !== v.CLIENT_SECRET.trim()) {
+          bail('A credential has leading or trailing whitespace — re-paste it without surrounding spaces or newlines.');
+        }
+        if (!/\.apps\.googleusercontent\.com$/.test(v.CLIENT_ID)) {
+          bail('GOOGLE_OAUTH_CLIENT_ID does not end in .apps.googleusercontent.com, so it is not a Google client ID. Check you pasted the client ID and not the project number or the secret.');
+        }
+
         fs.writeFileSync('src/drive-secrets.local.js',
           '// Written by CI from repository secrets. Never committed.\n' +
           'module.exports = ' + JSON.stringify(v, null, 2) + ';\n');
-
-        // Absent secrets are not fatal — the build simply behaves like a fresh
-        // clone and reports "not configured" — but say so loudly, because a
-        // release that silently lost its Drive support is a bad surprise.
-        if (!v.CLIENT_ID) {
-          console.log('::warning::GOOGLE_OAUTH_CLIENT_ID is not set — this build ships with Google Drive "not configured".');
-        } else if (!v.CLIENT_SECRET) {
-          console.log('::warning::GOOGLE_OAUTH_CLIENT_ID is set but GOOGLE_OAUTH_CLIENT_SECRET is empty. Google requires both for a Desktop client, so sign-in will fail.');
-        } else {
-          console.log('Drive credentials written (client id ends ...' + v.CLIENT_ID.slice(-28) + ').');
-        }
+        console.log('Drive credentials written (client id ends ...' + v.CLIENT_ID.slice(-28) + ').');
         NODE

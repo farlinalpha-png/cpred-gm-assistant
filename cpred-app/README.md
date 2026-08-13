@@ -39,11 +39,10 @@ The app isn't code-signed or notarized (no Apple Developer account), so macOS Ga
 
 The repo publishes to GitHub Releases, and the installed app checks that feed on launch via `electron-updater` (see `src/main.js`). To ship a new version:
 
-0. If this release should ship with Google Drive working, make sure the repo
-   secrets `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` are set
-   (see [DRIVE-SETUP.md](DRIVE-SETUP.md) step 7). Without them the build still
-   succeeds but ships with Drive "not configured", and the workflow log carries
-   a warning saying so.
+0. Make sure the repo secrets `GOOGLE_OAUTH_CLIENT_ID` and
+   `GOOGLE_OAUTH_CLIENT_SECRET` are set (see [DRIVE-SETUP.md](DRIVE-SETUP.md)
+   step 7). The release build **fails** without them rather than quietly
+   shipping installers with Google Drive disabled.
 1. Bump `"version"` in `package.json`
 2. Commit, then tag and push: `git tag v3.3.0 && git push origin v3.3.0` (tag must match the version, prefixed with `v`)
 3. GitHub Actions (`.github/workflows/release.yml`) builds the Windows installer and the macOS universal dmg/zip and attaches them all to **one draft release** — this takes a few minutes since the platforms build sequentially by design (see comments in the workflow file for why)
