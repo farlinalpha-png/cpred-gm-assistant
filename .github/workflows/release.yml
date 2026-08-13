@@ -40,6 +40,11 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - name: Write Drive credentials
+        uses: ./.github/actions/drive-credentials
+        with:
+          client-id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          client-secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
       - name: Ensure draft release exists for this tag
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -63,6 +68,11 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - name: Write Drive credentials
+        uses: ./.github/actions/drive-credentials
+        with:
+          client-id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          client-secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
       # Builds for this runner's OS and uploads installers to the draft
       # GitHub Release the mac job created for this tag. Go to the repo's
       # Releases page and click "Publish release" once this finishes to make

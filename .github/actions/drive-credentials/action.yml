@@ -1,0 +1,51 @@
+name: Write Drive credentials
+description: >
+  Materialises cpred-app/src/drive-secrets.local.js from repository secrets so a
+  CI build ships with Google Drive enabled. The file is gitignored and never
+  committed — this is how the values reach an installer without reaching the
+  repo. See cpred-app/DRIVE-SETUP.md.
+
+inputs:
+  client-id:
+    description: Google OAuth client ID (repo secret GOOGLE_OAUTH_CLIENT_ID)
+    required: false
+    default: ''
+  client-secret:
+    description: Google OAuth client secret (repo secret GOOGLE_OAUTH_CLIENT_SECRET)
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Values travel as env, never as shell arguments, and the file is written by
+    # node with JSON.stringify so any character in a secret survives intact.
+    # A composite action does not inherit the caller's defaults.run, hence the
+    # explicit working-directory.
+    - shell: bash
+      working-directory: cpred-app
+      env:
+        CID: ${{ inputs.client-id }}
+        CSEC: ${{ inputs.client-secret }}
+      run: |
+        node <<'NODE'
+        const fs = require('fs');
+        const v = {
+          CLIENT_ID: process.env.CID || '',
+          CLIENT_SECRET: process.env.CSEC || ''
+        };
+        fs.writeFileSync('src/drive-secrets.local.js',
+          '// Written by CI from repository secrets. Never committed.\n' +
+          'module.exports = ' + JSON.stringify(v, null, 2) + ';\n');
+
+        // Absent secrets are not fatal — the build simply behaves like a fresh
+        // clone and reports "not configured" — but say so loudly, because a
+        // release that silently lost its Drive support is a bad surprise.
+        if (!v.CLIENT_ID) {
+          console.log('::warning::GOOGLE_OAUTH_CLIENT_ID is not set — this build ships with Google Drive "not configured".');
+        } else if (!v.CLIENT_SECRET) {
+          console.log('::warning::GOOGLE_OAUTH_CLIENT_ID is set but GOOGLE_OAUTH_CLIENT_SECRET is empty. Google requires both for a Desktop client, so sign-in will fail.');
+        } else {
+          console.log('Drive credentials written (client id ends ...' + v.CLIENT_ID.slice(-28) + ').');
+        }
+        NODE

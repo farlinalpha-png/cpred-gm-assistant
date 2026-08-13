@@ -8,3 +8,8 @@ Thumbs.db
 
 # 3D module scratch/test harnesses
 cpred-app/public/map3d/_*.html
+
+# Real Google OAuth credentials — per machine, never committed. The tracked
+# drive-secrets.local.example.js is the template; drive-config.js reads the
+# local copy if it exists and reports "not configured" if it doesn't.
+cpred-app/src/drive-secrets.local.js
