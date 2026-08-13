@@ -111,6 +111,24 @@ Then rebuild. electron-builder's `src/**/*` glob **does** include the local
 file, so a build made on this machine ships with Drive enabled — the values
 reach the installer without ever reaching the repo.
 
+### 7. Add them to GitHub Actions (for releases)
+
+The local file is gitignored, so the CI that builds releases can't see it. Left
+alone, every published installer would report "not configured". Give Actions its
+own copy:
+
+1. Repo → **Settings → Secrets and variables → Actions → New repository secret**
+2. Add **`GOOGLE_OAUTH_CLIENT_ID`** — the same client ID
+3. Add **`GOOGLE_OAUTH_CLIENT_SECRET`** — the same secret
+
+`.github/actions/drive-credentials` writes them back into
+`src/drive-secrets.local.js` at build time, before electron-builder runs. Do
+this *before* pushing a release tag; a build with the secrets missing still
+succeeds, but logs a warning and ships with Drive disabled.
+
+Repository secrets are not exposed to forked-PR builds and are masked in logs,
+so this does not put them in front of contributors.
+
 #### Why not just commit them?
 
 A "Desktop app" client is not a confidential client — Google's own
