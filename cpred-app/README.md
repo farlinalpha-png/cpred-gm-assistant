@@ -102,8 +102,9 @@ Click **Storage** to choose where character and NPC sheets are kept:
   Drive for Desktop, a Dropbox folder, or a NAS share. That client does the
   syncing; the app just reads and writes files.
 - **Google Drive** — the app talks to Drive directly, so there's nothing extra
-  to install and you can sign in from any machine. Needs a client ID compiled
-  into the build; see **[DRIVE-SETUP.md](DRIVE-SETUP.md)**.
+  to install and you can sign in from any machine. Needs a Google client ID in
+  an untracked `src/drive-secrets.local.js` (never committed); see
+  **[DRIVE-SETUP.md](DRIVE-SETUP.md)**.
 
 Switching to a new folder offers to copy the characters you already have into
 it. Nothing is ever deleted by switching.
@@ -131,7 +132,9 @@ cpred-app/
 ├── src/
 │   ├── main.js            ← Electron main process (file I/O, host server, PDF)
 │   ├── drive.js           ← Google Drive sync (OAuth + REST, no npm deps)
-│   └── drive-config.js    ← Google client ID — fill in to enable Drive
+│   ├── drive-config.js    ← reads the credentials below; safe to commit
+│   └── drive-secrets.local.example.js  ← copy to drive-secrets.local.js
+│                             (gitignored) and paste your Google client ID
 ├── public/
 │   ├── index.html         ← Application shell
 │   ├── app.js             ← Application logic

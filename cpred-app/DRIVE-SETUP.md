@@ -90,31 +90,43 @@ app and doesn't limit anything.
 You don't need to register a redirect URI. The app listens on a random loopback
 port and Google allows any port for a loopback redirect.
 
-### 6. Put them in the source
+### 6. Put them on your machine
 
-Edit [`src/drive-config.js`](src/drive-config.js):
+Credentials go in an untracked file, **not** in `drive-config.js`. Copy the
+template and fill it in:
 
-```js
-CLIENT_ID: '<your-client-id>.apps.googleusercontent.com',
-CLIENT_SECRET: '<your-client-secret>',
+```bash
+cd cpred-app/src && cp drive-secrets.local.example.js drive-secrets.local.js
 ```
 
-Then rebuild. Until `CLIENT_ID` is filled in, the Drive option shows "not
-configured" and the app never contacts Google.
+Then edit `drive-secrets.local.js` and paste your two values into `CLIENT_ID`
+and `CLIENT_SECRET`.
 
-#### About committing the secret
+`.gitignore` keeps that file out of git, so the values stay on your machine and
+cannot ride along in a commit. `drive-config.js` reads it when present; without
+it, `CLIENT_ID` is empty, the Drive option shows "not configured", and the app
+never contacts Google.
+
+Then rebuild. electron-builder's `src/**/*` glob **does** include the local
+file, so a build made on this machine ships with Drive enabled — the values
+reach the installer without ever reaching the repo.
+
+#### Why not just commit them?
 
 A "Desktop app" client is not a confidential client — Google's own
 documentation says the desktop client secret "is obviously not treated as a
 secret", because anyone can extract it from an installed binary anyway. That is
 precisely why the sign-in flow in `src/drive.js` uses **PKCE**: the per-attempt
 code challenge, not the secret, is what stops an intercepted authorization code
-from being redeemed by someone else.
+from being redeemed by someone else. So committing them would not be a
+catastrophe.
 
-So committing these to the public repo is normal and safe. Worst case, someone
-copies your client ID into their own app — and their users get a consent screen
-with *your* app's name on it, granting access to *their own* Drive, not yours.
-If that ever bothers you, delete the client in the console and issue a new one.
+But GitHub's secret scanning blocks the push regardless, and it is right to —
+"not confidential" is not the same as "publish it". Someone who copies your
+client ID can stand up an app whose consent screen wears **your** app's name.
+Keeping the values in an untracked file costs one `cp` and avoids the whole
+argument. If a real credential ever does reach a commit, rotate it: delete the
+client in the console and issue a new one.
 
 ---
 

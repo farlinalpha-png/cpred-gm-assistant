@@ -1,29 +1,38 @@
 // ── Google Drive integration: app credentials ────────────────────────
 //
-// Fill CLIENT_ID (and CLIENT_SECRET) in before cutting a build with Drive
-// enabled. DRIVE-SETUP.md walks through the Google Cloud console steps that
-// produce them — about ten minutes, once, for the whole app.
+// The real client ID and secret do NOT live in this file. They go in
+// drive-secrets.local.js beside it, which .gitignore keeps out of git so a
+// credential can never ride along in a commit. Copy
+// drive-secrets.local.example.js to drive-secrets.local.js and fill it in;
+// DRIVE-SETUP.md walks through the Google Cloud console steps that produce
+// the values — about ten minutes, once, for the whole app.
 //
-// Until CLIENT_ID is set the Drive option still appears in Storage settings,
-// but reports "not configured" and nothing in the app ever contacts Google.
+// With no such file present CLIENT_ID stays empty: the Drive option still
+// appears in Storage settings, reports "not configured", and nothing in the
+// app ever contacts Google.
 //
-// On committing these to a public repo: an installed-app client is not a
-// confidential client. Google's own docs note the desktop-app secret "is
-// obviously not treated as a secret", which is exactly why the flow in
-// drive.js uses PKCE — the code challenge, not the secret, is what stops
-// another app from redeeming an intercepted authorization code. Anyone who
-// copies these values still lands on a consent screen naming this app, and
-// can only ever reach their own Drive.
+// electron-builder's "src/**/*" glob does pick the local file up, so a build
+// produced on a machine that has one ships with Drive enabled. That is the
+// intended way to cut a release with credentials baked in — the values reach
+// the installer without ever reaching the repo.
+
+// Absent on a fresh clone, and that is a supported state, not an error. Any
+// other failure (a syntax error in the local file, say) still throws, because
+// silently falling back to "not configured" would be a confusing way to learn
+// you had fat-fingered a quote.
+let local = {};
+try { local = require('./drive-secrets.local.js') || {}; }
+catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 
 module.exports = {
   // From Google Cloud → Credentials → OAuth client ID → type "Desktop app".
   // Format: twelve digits, a hyphen, ~32 characters, then the Google suffix.
-  CLIENT_ID: '',
+  CLIENT_ID: local.CLIENT_ID || '',
 
   // Google still requires this on the token exchange for Desktop clients even
   // when PKCE is used. Leave it empty and drive.js simply omits it, so if that
   // requirement is ever relaxed nothing here needs to change.
-  CLIENT_SECRET: '',
+  CLIENT_SECRET: local.CLIENT_SECRET || '',
 
   // Least privilege: drive.file grants access only to files this app itself
   // creates. The rest of the GM's Drive stays invisible to it — the app
