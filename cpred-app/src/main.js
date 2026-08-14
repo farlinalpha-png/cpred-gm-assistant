@@ -408,17 +408,34 @@ ipcMain.handle('load-character', async () => {
   catch (e) { return { success: false, error: e.message }; }
 });
 
-ipcMain.handle('export-pdf', async (event, html) => {
-  const { filePath } = await dialog.showSaveDialog(mainWindow, { title: 'Export Character Sheet', defaultPath: 'character-sheet.pdf', filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+ipcMain.handle('export-pdf', async (event, html, suggestedName) => {
+  const { filePath } = await dialog.showSaveDialog(mainWindow, { title: 'Export Character Sheet', defaultPath: suggestedName || 'character-sheet.pdf', filters: [{ name: 'PDF', extensions: ['pdf'] }] });
   if (!filePath) return { success: false };
+  let tmp = null, win = null;
   try {
-    const win = new BrowserWindow({ show: false });
-    await win.loadURL('data:text/html,' + encodeURIComponent(html));
-    const pdfData = await win.webContents.printToPDF({ printBackground: true });
+    // A data: URL truncates on long documents (a portrait alone is a megabyte of
+    // base64), so the sheet goes through a real file instead.
+    tmp = path.join(app.getPath('temp'), `cpred-sheet-${Date.now()}.html`);
+    fs.writeFileSync(tmp, html, 'utf8');
+    win = new BrowserWindow({ show: false, webPreferences: { javascript: false } });
+    await win.loadFile(tmp);
+    const pdfData = await win.webContents.printToPDF({
+      printBackground: true,
+      // The sheet declares `@page{size:11in 8.5in}` to match the official
+      // landscape RTG sheet — honour it instead of imposing portrait Letter.
+      preferCSSPageSize: true,
+      landscape: true,
+      pageSize: 'Letter',
+      margins: { marginType: 'custom', top: 0, bottom: 0, left: 0, right: 0 }
+    });
     fs.writeFileSync(filePath, pdfData);
-    win.close(); shell.openPath(filePath);
+    shell.openPath(filePath);
     return { success: true };
   } catch (e) { return { success: false, error: e.message }; }
+  finally {
+    if (win && !win.isDestroyed()) win.close();
+    if (tmp) { try { fs.unlinkSync(tmp); } catch {} }
+  }
 });
 
 ipcMain.handle('export-json', async (event, character) => {
