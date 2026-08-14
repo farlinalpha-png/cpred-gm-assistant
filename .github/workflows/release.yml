@@ -47,11 +47,20 @@ jobs:
           client-secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           # Names only — used to say which secrets ARE set when one is missing.
           secrets-json: ${{ toJSON(secrets) }}
+      # The draft is created BEFORE the build so concurrent electron-builder
+      # callers find it instead of racing to create it (see the header). That
+      # means it appears within a minute, empty, looking finished — and
+      # publishing it then makes electron-builder skip every upload silently,
+      # leaving a release with no installers and no latest.yml. That has
+      # happened twice. So it is named to say so, and the finalize job renames
+      # it once the assets are actually verified present.
       - name: Ensure draft release exists for this tag
         run: |
           VERSION=$(node -p "require('./package.json').version")
           gh release view "v$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
-          gh release create "v$VERSION" --repo "${{ github.repository }}" --draft --title "$VERSION" --notes "Automated build"
+          gh release create "v$VERSION" --repo "${{ github.repository }}" --draft \
+            --title "⏳ $VERSION — BUILDING, DO NOT PUBLISH" \
+            --notes "Build in progress. Do not publish until the title says READY — publishing now makes electron-builder skip the installer uploads."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run publish
@@ -84,3 +93,41 @@ jobs:
       - run: npm run publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Nothing else proves the release is safe to publish: both platform jobs go
+  # green even when their uploads were skipped, because the skip happens inside
+  # electron-builder. So verify the assets are really attached, and only then
+  # rename the draft to say it is ready.
+  finalize:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cpred-app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Verify every installer is attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAMES=$(gh release view "v$VERSION" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')
+          echo "attached:"; echo "$NAMES" | sed 's/^/  /'
+          MISSING=""
+          for want in "Setup-$VERSION.exe" "$VERSION-universal.dmg" "$VERSION-universal-mac.zip" "latest.yml" "latest-mac.yml"; do
+            echo "$NAMES" | grep -qF -- "$want" || MISSING="$MISSING $want"
+          done
+          COUNT=$(echo "$NAMES" | grep -c . || true)
+          if [ -n "$MISSING" ] || [ "$COUNT" -lt 8 ]; then
+            gh release edit "v$VERSION" --repo "${{ github.repository }}" \
+              --title "❌ $VERSION — INCOMPLETE, DO NOT PUBLISH ($COUNT/8)" || true
+            echo "::error::Only $COUNT assets attached. Missing:$MISSING"
+            echo "::error::Delete this release (the tag survives), re-run the workflow, and publish only once the title says READY."
+            exit 1
+          fi
+          gh release edit "v$VERSION" --repo "${{ github.repository }}" \
+            --title "✅ $VERSION — READY TO PUBLISH ($COUNT assets)"
+          echo "All $COUNT assets attached."
