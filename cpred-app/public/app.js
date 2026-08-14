@@ -1184,6 +1184,8 @@ const psEsc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // An empty field prints as a rule to write on, the way the paper sheet does —
 // a page of "—" reads as broken data rather than as a blank to fill in.
 const psVal = v => (v === 0 || (v && String(v).trim())) ? psEsc(v) : '<i class="bl"></i>';
+// n write-on rules — what the paper sheet prints where there is nothing to say yet
+const psRules = n => `<div class="fill">${'<i></i>'.repeat(n)}</div>`;
 
 function psStyles() {
   return `
@@ -1233,9 +1235,16 @@ function psStyles() {
   section.run{break-inside:auto}          /* skills are allowed to continue in the next column */
   h2{font-family:var(--cond);font-size:8pt;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
     background:var(--ink);color:#fff;padding:1.5px 5px;break-after:avoid;margin-bottom:3px}
-  h3{font-family:var(--cond);font-size:7pt;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;
+  /* The category rule already spans the column, so the column legend rides on
+     its empty right-hand end — every category carries its own "STAT LVL BASE"
+     for free, the way the printed sheet does, instead of one legend at the top
+     that a reader three columns away can no longer see. */
+  h3{display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--cond);font-size:7pt;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;
     color:var(--red);border-bottom:.8pt solid var(--red);margin:3px 0 1px;break-after:avoid}
   h3:first-child{margin-top:0}
+  h3 u{font-size:6pt;font-weight:400;letter-spacing:.6px;color:var(--rule);text-decoration:none;
+    flex:0 0 auto;padding-left:6px}
 
   /* generic label/value row: label left in condensed caps, value right */
   .r{display:flex;justify-content:space-between;gap:5px;align-items:baseline;
@@ -1243,7 +1252,10 @@ function psStyles() {
   .r>.k{font-family:var(--cond);font-size:7pt;letter-spacing:.5px;text-transform:uppercase;color:var(--mute);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .r>.v{font-family:var(--num);font-size:8pt;font-weight:700;white-space:nowrap}
+  .r.wide>.k{flex:0 0 auto}
+  .r.wide>.v{white-space:normal;text-align:right;min-width:0}
   .bl{display:inline-block;width:34px;border-bottom:.6pt solid var(--rule);height:7px}
+  .lp .v .bl,.note .bl{display:block;width:100%;height:8px}
 
   /* stat ladder — mirrors the official sheet's left rail */
   .stat{display:flex;align-items:center;gap:4px;border-bottom:.4pt solid var(--hair);padding:1px 0}
@@ -1266,14 +1278,17 @@ function psStyles() {
   .sk.on .lv{color:var(--ink)}
   .sk.on .bs{color:var(--red)}
   .sk .spec{font-style:italic;color:var(--red)}
-  .colhead{display:flex;gap:3px;font-family:var(--cond);font-size:6pt;line-height:1.1;letter-spacing:.8px;color:var(--mute);
-    text-transform:uppercase;break-after:avoid}
-  .colhead .nm{flex:1 1 auto}.colhead .st{width:22px;text-align:right}
-  .colhead .lv{width:11px;text-align:right}.colhead .bs{width:15px;text-align:right}
   .skcat{break-inside:avoid;-webkit-column-break-inside:avoid}
 
-  /* two-line item blocks (weapons, cyberware, vehicles) — the narrow-column
-     pattern the official DataPack sheet uses, so nothing needs a wide table */
+  /* one-line item rows: twelve pieces of cyberware at two lines each is most of
+     a column spent on the words "HL" */
+  .cw{display:flex;justify-content:space-between;gap:4px;align-items:baseline;
+    border-bottom:.4pt solid var(--hair);padding:.3px 0;break-inside:avoid}
+  .cw .n{font-family:var(--cond);font-size:7pt;flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cw .h{font-family:var(--num);font-size:6pt;color:var(--mute);white-space:nowrap}
+
+  /* two-line item blocks (weapons, vehicles) — the narrow-column pattern the
+     official DataPack sheet uses, so nothing needs a wide table */
   .it{break-inside:avoid;padding:1.5px 0;border-bottom:.4pt solid var(--hair)}
   .it .t{font-family:var(--cond);font-size:8pt;font-weight:700;letter-spacing:.3px;text-transform:uppercase}
   .it .d{font-family:var(--num);font-size:6pt;color:var(--mute);line-height:1.25}
@@ -1300,12 +1315,13 @@ function psStyles() {
 // fifth of the page in packing slack. So long categories are pre-split into
 // labelled chunks small enough to place freely, which is the same "Education
 // Skills … Education Skills" continuation the printed RTG sheet uses.
-const PS_CHUNK = 8;
+const PS_CHUNK = 6;
 function psSkillChunks(cat, list) {
   const n = Math.ceil(list.length / PS_CHUNK) || 1;
   const per = Math.ceil(list.length / n);
   return Array.from({ length: n }, (_, i) => ({
     label: i ? cat + ' cont.' : cat,
+    cont: i > 0,
     rows: list.slice(i * per, (i + 1) * per)
   })).filter(c => c.rows.length);
 }
@@ -1355,7 +1371,6 @@ function buildPrintSheetHTML(c, fit = {}) {
       return `<div class="stat${d ? ' up' : ''}"><span class="n">${s}</span>
         <span class="e">${d ? `base ${b}` : ''}</span><span class="b">${e}</span></div>`;
     }).join('')}
-    <div class="fine">Boxed value is the effective STAT.</div>
   </section>`;
 
   // ── role ability ──
@@ -1364,20 +1379,30 @@ function buildPrintSheetHTML(c, fit = {}) {
         .filter(([n]) => (c.roleSubRanks[n] || 0) > 0)
         .map(([n]) => `${n} ${c.roleSubRanks[n]}`).join(' · ')
     : '';
+  // The full rules text runs to a paragraph; on a sheet you want the reminder,
+  // not the rulebook. Cut at the last sentence end that fits, or failing that
+  // the last clause, so it never stops mid-phrase on a dangling "and it".
+  const how = (() => {
+    const t = (det.how || '').trim();
+    if (t.length <= 175) return t;
+    const head = t.slice(0, 175);
+    const at = Math.max(head.lastIndexOf('. '), head.lastIndexOf('; '));
+    if (at > 60) return head.slice(0, at + 1);
+    const comma = head.lastIndexOf(', ');
+    return (comma > 60 ? head.slice(0, comma) : head.replace(/\s\S*$/, '')) + '…';
+  })();
   const role = `<section><h2>Role Ability</h2>
     ${row(det.name || c.role || 'Role', 'Rank ' + (c.roleAbilityRank || 4))}
     ${subs ? `<div class="lp"><div class="k">Specialties</div><div class="v">${psEsc(subs)}</div></div>` : ''}
-    <div class="fine">${psEsc(det.how || '')}</div>
+    ${how ? `<div class="fine">${psEsc(how)}</div>` : ''}
   </section>`;
 
   // ── skills: every skill, the way the printed sheet lists them ──
-  // One legend for the whole section rather than one per category: at this size
-  // fourteen repeats of "SKILL STAT LVL BASE" cost most of a column and read as
-  // noise. Every row still names its own linked STAT.
   const skills = `<section class="run"><h2>Skills</h2>
-    <div class="colhead"><span class="nm">Skill</span><span class="st">Stat</span><span class="lv">Lvl</span><span class="bs">Base</span></div>
-    ${Object.entries(CPRED_DATA.skills).flatMap(([cat, list]) => psSkillChunks(cat, list)).map(({ label, rows }) => `
-      <div class="skcat"><h3>${psEsc(label)}</h3>
+    <div class="fine" style="margin:0 0 2px">BASE = effective STAT + LVL + every equipment, role and manual modifier. Roll 1d10 + BASE.</div>
+    ${Object.entries(CPRED_DATA.skills).flatMap(([cat, list]) => psSkillChunks(cat, list)).map(({ label, cont, rows }, ci) => `
+      <div class="skcat">${!cont || !fit.keepLabels || fit.keepLabels.has(ci)
+        ? `<h3>${psEsc(label)}<u>Stat &nbsp;Lvl &nbsp;Base</u></h3>` : ''}
       ${rows.map(sk => {
         const lvl = c.skills[sk.name] || 0;
         const mod = autoSkillMod(autoMods, sk.name) + otherSkillMod(c, sk.name);
@@ -1387,7 +1412,6 @@ function buildPrintSheetHTML(c, fit = {}) {
         return `<div class="sk${on ? ' on' : ''}"><span class="nm">${psEsc(sk.name)}${spec ? ` <span class="spec">${psEsc(spec)}</span>` : ''}</span>
           <span class="st">${sk.stat}</span><span class="lv">${lvl || '·'}</span><span class="bs">${on ? base : '·'}</span></div>`;
       }).join('')}</div>`).join('')}
-    <div class="fine">BASE = effective STAT + LVL + every equipment, role and manual modifier. Roll 1d10 + BASE.</div>
   </section>`;
 
   // ── weapons / armor ──
@@ -1395,34 +1419,42 @@ function buildPrintSheetHTML(c, fit = {}) {
     ${c.weapons.length ? c.weapons.map(w => `<div class="it">
       <div class="t">${psEsc(w.name)}</div>
       <div class="d"><b>${psEsc(w.damage || '—')}</b> dmg · ROF ${psEsc(w.rof || '—')} · Ammo ${psVal(w.ammo)}${w.notes ? '<br>' + psEsc(w.notes) : ''}</div>
-    </div>`).join('') : '<div class="fine">No weapons carried.</div>'}
+    </div>`).join('') : psRules(4)}
   </section>
   <section><h2>Armor</h2>
     ${['head', 'body', 'shield'].map(k => {
       const sp = c.armor && c.armor[k + 'SP'];
-      return `<div class="r"><span class="k">${k}${sp ? ' &nbsp;SP ' + sp : ''}</span><span class="v" style="font-family:var(--cond);font-weight:600">${psVal(c.armor && c.armor[k])}</span></div>`;
+      return `<div class="r wide"><span class="k">${k}${sp ? ' &nbsp;SP ' + sp : ''}</span><span class="v" style="font-family:var(--cond);font-weight:600">${psVal(c.armor && c.armor[k])}</span></div>`;
     }).join('')}
     <div class="fine">Armor penalty applies to REF, DEX and MOVE.</div>
+  </section>
+  <!-- The app tracks no critical injuries, but the official sheet gives them a
+       box because they are written down mid-fight. Ruled space is the useful
+       thing to print here, not an empty data field. -->
+  <section><h2>Critical Injuries</h2>
+    ${psRules(5)}
+    <div class="fine">−2 to all Actions while Seriously Wounded (HP at or below ${Math.ceil(hp / 2)}).</div>
   </section>`;
 
   // ── cyberware / vehicles / gear ──
-  const cyber = c.cyberware.length ? `<section><h2>Cyberware &nbsp;<span style="font-weight:400">HL ${hl} · Humanity ${hum}/${maxHum}</span></h2>
-    ${c.cyberware.map(cw => `<div class="it">
-      <div class="t">${psEsc(cw.name)}</div>
-      <div class="d">HL ${psEsc(cw.hl ?? 0)}</div>
-      ${(cw.upgrades || []).length ? `<div class="up">${cw.upgrades.map(u => psEsc(u.name + (u.effect ? ' — ' + u.effect : ''))).join('<br>')}</div>` : ''}
-    </div>`).join('')}
-  </section>` : '';
+  // Every section prints whether or not the character has anything in it: an
+  // empty list on a sheet about to be printed is not "no cyberware", it is room
+  // to write cyberware in. The paper sheet is ruled space for exactly this.
+  const cyber = `<section><h2>Cyberware &nbsp;<span style="font-weight:400">HL ${hl} · Humanity ${hum}/${maxHum}</span></h2>
+    ${c.cyberware.length ? c.cyberware.map(cw => `<div class="cw"><span class="n">${psEsc(cw.name)}</span><span class="h">HL ${psEsc(cw.hl ?? 0)}</span></div>
+      ${(cw.upgrades || []).length ? `<div class="it"><div class="up">${cw.upgrades.map(u => psEsc('◆ ' + u.name + (u.effect ? ' — ' + u.effect : ''))).join('<br>')}</div></div>` : ''}`).join('')
+      : psRules(6)}
+  </section>`;
 
-  const vehicles = (c.vehicles && c.vehicles.length) ? `<section><h2>Vehicles</h2>
-    ${c.vehicles.map(v => `<div class="it"><div class="t">${psEsc(v.name)}</div>
+  const vehicles = `<section><h2>Vehicles</h2>
+    ${(c.vehicles && c.vehicles.length) ? c.vehicles.map(v => `<div class="it"><div class="t">${psEsc(v.name)}</div>
       <div class="d">SDP <b>${psEsc(v.curSDP !== undefined ? v.curSDP : v.sdp)}</b>/${psEsc(v.sdp)} · SP ${psEsc(v.sp)} · ${psEsc(v.seats)} seat${v.seats == 1 ? '' : 's'}${v.upgrades && v.upgrades.length ? '<br>' + psEsc(v.upgrades.join(', ')) : ''}</div>
-    </div>`).join('')}
-  </section>` : '';
+    </div>`).join('') : psRules(3)}
+  </section>`;
 
   const gear = `<section><h2>Gear</h2>
     ${c.gear.length ? `<div class="gear">${c.gear.map(g => `<span><i>${psEsc(g.qty || 1)}</i>${psEsc(g.name)}</span>`).join('')}</div>`
-      : '<div class="fine">Nothing carried.</div>'}
+      : psRules(8)}
   </section>`;
 
   // ── lifepath / notes ──
@@ -1439,7 +1471,7 @@ function buildPrintSheetHTML(c, fit = {}) {
   // half way down. The paper sheet ends in ruled blank space too, so filling the
   // remainder this way reads as a form rather than as content that ran out.
   const filler = fit.lines > 0
-    ? `<div class="fill">${'<i></i>'.repeat(fit.lines)}</div>` : '';
+    ? psRules(fit.lines) : '';
   const notes = `<section class="run"><h2>Notes</h2><div class="note">${psVal(c.notes)}</div>${filler}</section>`;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
@@ -1476,7 +1508,12 @@ function measurePrintFlow(html) {
         if (!mast || !flow) return;
         const mastH = mast.getBoundingClientRect().height + parseFloat(getComputedStyle(mast).marginBottom || 0);
         const ncol = parseInt(getComputedStyle(flow).columnCount) || 4;
-        finish({ colInk: flow.getBoundingClientRect().height * ncol, mastH, ncol });
+        // Which skill chunks landed at the top of a column. Every column in a
+        // multicol starts at the flow's top edge, so that is the whole test.
+        const top = flow.getBoundingClientRect().top;
+        const starts = [...d.querySelectorAll('.skcat')]
+          .map((el, i) => el.getBoundingClientRect().top - top < 3 ? i : -1).filter(i => i >= 0);
+        finish({ colInk: flow.getBoundingClientRect().height * ncol, mastH, ncol, starts });
       } catch (e) { finish(null); }
     };
     document.body.appendChild(f);
@@ -1486,8 +1523,24 @@ function measurePrintFlow(html) {
 }
 
 async function fitPrintSheet(c) {
-  const m = await measurePrintFlow(buildPrintSheetHTML(c));
-  if (!m || !m.colInk) return buildPrintSheetHTML(c);
+  // A continuation heading only earns its place at the top of a column. When a
+  // chunk lands directly under its own first half, "Education cont." sitting
+  // mid-column is noise — so lay it out, see which chunks actually began a
+  // column, and keep a heading only for those and for each category's first
+  // chunk. Dropping headings shortens the flow and moves chunks, so repeat
+  // until the set stops growing; it only ever grows, so it terminates.
+  let keep = null;
+  for (let pass = 0; pass < 3; pass++) {
+    const probe = await measurePrintFlow(buildPrintSheetHTML(c, { keepLabels: keep }));
+    if (!probe || !probe.colInk) return buildPrintSheetHTML(c);
+    const next = new Set(keep || []);
+    const before = next.size;
+    probe.starts.forEach(i => next.add(i));
+    if (keep && next.size === before) break;
+    keep = next;
+  }
+  const m = await measurePrintFlow(buildPrintSheetHTML(c, { keepLabels: keep }));
+  if (!m || !m.colInk) return buildPrintSheetHTML(c, { keepLabels: keep });
   const cap1 = (PS_PAGE.h - m.mastH) * m.ncol;   // page 1 loses the masthead band
   const capN = PS_PAGE.h * m.ncol;
   const pagesFor = ink => ink <= cap1 ? 1 : 1 + Math.ceil((ink - cap1) / capN);
@@ -1506,7 +1559,7 @@ async function fitPrintSheet(c) {
   const slack = capFor(pages) - m.colInk * zoom;
   const lines = slack > capFor(pages) * 0.06
     ? Math.floor(slack * 0.96 / (PS_PAGE.line * zoom)) : 0;
-  return buildPrintSheetHTML(c, { zoom, lines: Math.min(Math.max(lines, 0), 300) });
+  return buildPrintSheetHTML(c, { zoom, lines: Math.min(Math.max(lines, 0), 300), keepLabels: keep });
 }
 
 async function exportPDF() {
