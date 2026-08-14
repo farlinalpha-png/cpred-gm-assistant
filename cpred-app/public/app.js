@@ -140,7 +140,7 @@ function initWizard() {
 
   buildStatInputGrid();
   buildSkillInputTables();
-  buildLifepathFields();
+  renderLifepathEditors();
 }
 
 function selectMethod(method, el) {
@@ -206,7 +206,7 @@ function goWizardStep(step) {
     document.getElementById('step1-role-section').style.display = isPregen ? 'none' : 'block';
   }
   if (step === 3) renderWizardRoleAlloc();
-  if (step === 5) { buildLifepathFields(); buildLifepathRelationships(); }
+  if (step === 5) { renderLifepathEditors(); buildLifepathRelationships(); }
   if (step === 6) buildStartingGearList();
   if (step === 7) buildDoneSummary();
 }
@@ -375,71 +375,146 @@ const lifepathDefs = [
   { key: 'lifepathNotes', label: 'Lifepath Notes', free: true },
 ];
 
-function buildLifepathFields() {
-  const container = document.getElementById('lifepath-fields');
-  container.innerHTML = lifepathDefs.map(def => {
-    if (def.free) return `
-      <div class="lp-item">
+// The Lifepath view's own textareas, and the keys they edit. Shared with
+// FORM_FIELDS so the collect and populate sides can never drift apart.
+const LP_VIEW_FIELDS = {
+  'lp-friends':'lp_friends','lp-love':'lp_love','lp-enemies':'lp_enemies',
+  'lp-goals':'lp_goals','lp-role-specific':'lp_roleSpecific'
+};
+
+// The same 13 keys are edited on three surfaces at once — the wizard's step 5,
+// the Lifepath view and the Full Sheet — so each surface prefixes its element
+// ids and a write updates all of them.
+const LP_SURFACES = { 'lifepath-fields':'lp-', 'view-lifepath-grid':'vlp-', 'sheet-lifepath-grid':'slp-' };
+const LP_PREFIXES = Object.values(LP_SURFACES);
+// The wizard commits at Finish or Save; the other two have no such step, and the
+// sheet tells the user every field on it saves automatically.
+const LP_AUTOSAVE = ['vlp-', 'slp-'];
+const lpSave = prefix => (LP_AUTOSAVE.includes(prefix) ? ';saveToLocalStorage()' : '');
+
+// "Other" lets a player write their own background instead of taking a table
+// entry. It is a select sentinel only: char.lifepath[key] always holds the
+// literal text, and "is this custom?" is derived by asking whether the text is
+// in the table. Storing a flag instead would mean migrating every character
+// already on disk.
+const LP_OTHER = '__other__';
+function isCustomLifepath(def, val) {
+  if (!def || !def.options || !val) return false;
+  return !(CPRED_DATA.lifepath[def.options] || []).includes(val);
+}
+const lpEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+
+// Write-through: the inputs are rebuilt from char whenever a surface is
+// re-entered, so an edit that only lived in the DOM was thrown away by the next
+// rebuild (Back then Next was enough to lose it). Mirror into the other
+// surfaces' live elements rather than re-rendering them — a rebuild would yank
+// focus out of whichever box is being typed in.
+function setLifepath(key, val) {
+  char.lifepath[key] = val;
+  const def = lifepathDefs.find(d => d.key === key);
+  const custom = isCustomLifepath(def, val);
+  LP_PREFIXES.forEach(p => {
+    const el = document.getElementById(p + key);
+    if (!el) return;
+    const shown = def && def.options && custom ? LP_OTHER : val;
+    if (el.value !== shown) el.value = shown;
+    const box = document.getElementById(p + key + '-other');
+    if (box) box.style.display = custom ? '' : 'none';
+    const cust = document.getElementById(p + key + '-custom');
+    if (cust && cust.value !== (custom ? val : '')) cust.value = custom ? val : '';
+  });
+}
+
+// The select cannot hold text that is not one of its options, so picking Other
+// hands the field to the box beside it. Any table entry that was selected is
+// dropped rather than left behind looking like the player's own words.
+function setLifepathChoice(key, prefix, sel) {
+  if (sel !== LP_OTHER) { setLifepath(key, sel); return; }
+  const def = lifepathDefs.find(d => d.key === key);
+  setLifepath(key, isCustomLifepath(def, char.lifepath[key]) ? char.lifepath[key] : '');
+  const el = document.getElementById(prefix + key);
+  if (el) el.value = LP_OTHER;
+  const box = document.getElementById(prefix + key + '-other');
+  if (box) box.style.display = '';
+  const cust = document.getElementById(prefix + key + '-custom');
+  if (cust) cust.focus();
+}
+
+// One editor, rendered per surface. A value that matches no table entry comes
+// back as Other with the text restored — that round trip is what makes a custom
+// value survive re-renders instead of silently blanking the select.
+function lifepathFieldHTML(def, prefix) {
+  const val = char.lifepath[def.key] || '';
+  if (def.free) return `
+    <div class="lp-item">
+      <div class="lp-label">${def.label}</div>
+      <input id="${prefix}${def.key}" value="${lpEsc(val)}" placeholder="Enter or randomize..." style="font-size:12px" oninput="setLifepath('${def.key}',this.value)${lpSave(prefix)}">
+    </div>`;
+  const opts = CPRED_DATA.lifepath[def.options] || [];
+  const custom = isCustomLifepath(def, val);
+  return `
+    <div class="lp-item">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
         <div class="lp-label">${def.label}</div>
-        <input id="lp-${def.key}" value="${char.lifepath[def.key]||''}" placeholder="Enter or randomize..." style="font-size:12px">
-      </div>`;
-    const opts = CPRED_DATA.lifepath[def.options] || [];
-    return `
-      <div class="lp-item">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <div class="lp-label">${def.label}</div>
-          <button class="random-btn" onclick="randomizeField('${def.key}','${def.options}')">🎲</button>
-        </div>
-        <select id="lp-${def.key}" style="font-size:12px">
-          <option value="">— Select —</option>
-          ${opts.map(o => `<option value="${o}" ${char.lifepath[def.key]===o?'selected':''}>${o}</option>`).join('')}
-        </select>
-      </div>`;
-  }).join('');
+        <button class="random-btn" onclick="randomizeField('${def.key}','${def.options}')">🎲</button>
+      </div>
+      <select id="${prefix}${def.key}" style="font-size:12px" onchange="setLifepathChoice('${def.key}','${prefix}',this.value)${lpSave(prefix)}">
+        <option value="">— Select —</option>
+        ${opts.map(o => `<option value="${lpEsc(o)}" ${!custom && val === o ? 'selected' : ''}>${o}</option>`).join('')}
+        <option value="${LP_OTHER}" ${custom ? 'selected' : ''}>Other…</option>
+      </select>
+      <div id="${prefix}${def.key}-other" style="margin-top:4px;display:${custom ? '' : 'none'}">
+        <input id="${prefix}${def.key}-custom" value="${lpEsc(custom ? val : '')}" placeholder="Your own ${def.label.toLowerCase()}..." style="font-size:12px" oninput="setLifepath('${def.key}',this.value)${lpSave(prefix)}">
+      </div>
+    </div>`;
+}
+
+const lifepathGridHTML = prefix => lifepathDefs.map(def => lifepathFieldHTML(def, prefix)).join('');
+
+// Full rebuild from char — for when the character changes under the UI, not for
+// individual edits (setLifepath mirrors those without touching markup).
+function renderLifepathEditors() {
+  Object.entries(LP_SURFACES).forEach(([id, prefix]) => {
+    const box = document.getElementById(id);
+    if (box) box.innerHTML = lifepathGridHTML(prefix);
+  });
 }
 
 function renderLifepathView() {
-  buildLifepathFields();
-  const lp = char.lifepath;
-  document.getElementById('lp-friends').value = char.lp_friends || '';
-  document.getElementById('lp-love').value = char.lp_love || '';
-  document.getElementById('lp-enemies').value = char.lp_enemies || '';
-  document.getElementById('lp-goals').value = char.lp_goals || '';
-  document.getElementById('lp-role-specific').value = char.lp_roleSpecific || '';
-
-  // Mirror to view lifepath grid
-  const grid = document.getElementById('view-lifepath-grid');
-  if (grid) {
-    grid.innerHTML = lifepathDefs.map(def => `
-      <div class="lp-item">
-        <div class="lp-label">${def.label}</div>
-        <div class="lp-value">${char.lifepath[def.key] || '—'}</div>
-      </div>`).join('');
-  }
+  renderLifepathEditors();
+  Object.entries(LP_VIEW_FIELDS).forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = char[key] || '';
+  });
 }
 
+// Rolls only ever come off the real table, never Other; setLifepath then clears
+// any custom text that field was carrying so the two cannot disagree. A roll is
+// a committed edit and the Lifepath view has no Finish step, so it saves itself
+// (the store write is debounced, so a Randomize All is still one write).
 function randomizeField(key, optKey) {
   const opts = CPRED_DATA.lifepath[optKey] || [];
-  const val = opts[Math.floor(Math.random() * opts.length)] || '';
-  char.lifepath[key] = val;
-  const el = document.getElementById('lp-' + key);
-  if (el) el.value = val;
+  setLifepath(key, opts[Math.floor(Math.random() * opts.length)] || '');
+  saveToLocalStorage();
 }
 
 function randomizeAllLifepath() {
-  lifepathDefs.forEach(def => {
-    if (def.options) {
-      const opts = CPRED_DATA.lifepath[def.options] || [];
-      char.lifepath[def.key] = opts[Math.floor(Math.random() * opts.length)] || '';
-    }
-  });
-  buildLifepathFields();
+  lifepathDefs.forEach(def => { if (def.options) randomizeField(def.key, def.options); });
+}
+
+// The wizard's select holds a sentinel when the player chose Other, so the real
+// value has to come from the box beside it.
+function lifepathInputValue(def, prefix) {
+  const el = document.getElementById(prefix + def.key);
+  if (!el) return char.lifepath[def.key] || '';
+  if (!def.options || el.value !== LP_OTHER) return el.value;
+  const cust = document.getElementById(prefix + def.key + '-custom');
+  return cust ? cust.value : '';
 }
 
 function collectLifepathData() {
   lifepathDefs.forEach(def => {
-    const el = document.getElementById('lp-' + def.key);
-    if (el) char.lifepath[def.key] = el.value;
+    if (document.getElementById('lp-' + def.key)) char.lifepath[def.key] = lifepathInputValue(def, 'lp-');
   });
 }
 
@@ -499,32 +574,40 @@ function buildLifepathRelationships() {
             <div class="lp-label">${f.label}</div>
             <button class="random-btn" onclick="seedLifepathRel('${f.key}')">🎲</button>
           </div>
-          <textarea id="wlp-${f.key}" placeholder="${f.placeholder}" style="min-height:48px;font-size:12px" oninput="char.${f.key}=this.value">${char[f.key] || ''}</textarea>
+          <textarea id="wlp-${f.key}" placeholder="${f.placeholder}" style="min-height:48px;font-size:12px" oninput="setLifepathRel('${f.key}',this.value)">${char[f.key] || ''}</textarea>
         </div>`).join('')}
       <div class="lp-item">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
           <div class="lp-label">${char.role || 'Role'} Lifepath (role-specific)</div>
           <button class="random-btn" onclick="seedLifepathRole()">🎲</button>
         </div>
-        <textarea id="wlp-lp_roleSpecific" placeholder="A defining event tied to being a ${char.role || 'edgerunner'}..." style="min-height:48px;font-size:12px" oninput="char.lp_roleSpecific=this.value">${char.lp_roleSpecific || ''}</textarea>
+        <textarea id="wlp-lp_roleSpecific" placeholder="A defining event tied to being a ${char.role || 'edgerunner'}..." style="min-height:48px;font-size:12px" oninput="setLifepathRel('lp_roleSpecific',this.value)">${char.lp_roleSpecific || ''}</textarea>
       </div>
     </div>`;
+}
+
+// These five keys have two editors — the wizard's wlp-* textareas and the
+// Lifepath view's lp-* ones. Writing one has to update char AND the other, or
+// the stale twin wins the next collectAllFormData() and wipes the edit.
+function setLifepathRel(key, val) {
+  char[key] = val;
+  const viewId = Object.keys(LP_VIEW_FIELDS).find(id => LP_VIEW_FIELDS[id] === key);
+  ['wlp-' + key, viewId].forEach(id => {
+    const el = id && document.getElementById(id);
+    if (el && el.value !== val) el.value = val;
+  });
 }
 
 function seedLifepathRel(key) {
   const f = LP_REL_FIELDS.find(x => x.key === key);
   if (!f) return;
-  char[key] = f.seeds[Math.floor(Math.random() * f.seeds.length)];
-  const el = document.getElementById('wlp-' + key);
-  if (el) el.value = char[key];
+  setLifepathRel(key, f.seeds[Math.floor(Math.random() * f.seeds.length)]);
 }
 
 function seedLifepathRole() {
   const seeds = LP_ROLE_SEEDS[char.role] || [];
   if (!seeds.length) return;
-  char.lp_roleSpecific = seeds[Math.floor(Math.random() * seeds.length)];
-  const el = document.getElementById('wlp-lp_roleSpecific');
-  if (el) el.value = char.lp_roleSpecific;
+  setLifepathRel('lp_roleSpecific', seeds[Math.floor(Math.random() * seeds.length)]);
 }
 
 // ── Starting Gear ──────────────────────────────────────────────────
@@ -1046,29 +1129,34 @@ function removeNetProgram(idx) { char.netPrograms.splice(idx, 1); renderLoadedPr
 // ═══════════════════════════════════════════════════════════════════
 // SAVE / LOAD / EXPORT
 // ═══════════════════════════════════════════════════════════════════
+// Every id here is read back into char on every save/export, from whatever
+// section it lives in — so populateAllForms() must repopulate ALL of them when
+// a character is loaded. A field left holding the previous character's text
+// (or the blank it was built with) is written straight back over the loaded
+// one on the next save, which is how lifepath, netdeck, lifestyle and tracker
+// notes were silently reverting.
+const FORM_FIELDS = {
+  'c-name':'name','c-handle':'handle','c-age':'age','c-gender':'gender',
+  'c-aliases':'aliases','c-rep':'rep','c-eddies':'eddies','c-notes':'notes',
+  ...LP_VIEW_FIELDS,
+  'net-deck-name':'netDeck','net-deck-cost':'netDeckCost',
+  'net-hardware':'netHardware','net-stealth-notes':'netStealthNotes',
+  'ammo-notes':'ammoNotes','char-cash':'cash','char-fashion':'fashion',
+  'char-housing':'housing','char-rent':'rent','char-lifestyle':'lifestyle',
+  'tracker-crits':'trackerCrits','tracker-addictions':'trackerAddictions',
+  'tracker-notes':'trackerNotes','tracker-rep-events':'trackerRepEvents'
+};
+
 function collectAllFormData() {
-  // Collect any open form fields
-  const fields = {
-    'c-name':'name','c-handle':'handle','c-age':'age','c-gender':'gender',
-    'c-aliases':'aliases','c-rep':'rep','c-eddies':'eddies','c-notes':'notes',
-    'lp-friends':'lp_friends','lp-love':'lp_love','lp-enemies':'lp_enemies',
-    'lp-goals':'lp_goals','lp-role-specific':'lp_roleSpecific',
-    'net-deck-name':'netDeck','net-deck-cost':'netDeckCost',
-    'net-hardware':'netHardware','net-stealth-notes':'netStealthNotes',
-    'ammo-notes':'ammoNotes','char-cash':'cash','char-fashion':'fashion',
-    'char-housing':'housing','char-rent':'rent','char-lifestyle':'lifestyle',
-    'tracker-crits':'trackerCrits','tracker-addictions':'trackerAddictions',
-    'tracker-notes':'trackerNotes','tracker-rep-events':'trackerRepEvents'
-  };
-  Object.entries(fields).forEach(([id, key]) => {
+  Object.entries(FORM_FIELDS).forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (el) char[key] = el.type === 'number' ? parseInt(el.value)||0 : el.value;
   });
-  collectLifepathData();
-  // Only pull stats from the wizard's creation inputs while the creation
-  // wizard is actually the active view. Otherwise the stale wizard inputs
-  // (default 5s) would clobber edits made on the Full Sheet.
+  // Only pull the wizard's own inputs while the creation wizard is actually the
+  // active view. They stay in the DOM behind the Full Sheet, so otherwise the
+  // stale stats (default 5s) and stale lp-* fields clobber sheet edits.
   if (activeSection === 'creation') {
+    collectLifepathData();
     if (!char.stats) char.stats = {};
     CPRED_DATA.stats.forEach(s => {
       const el = document.getElementById('stat-' + s);
@@ -1143,14 +1231,14 @@ async function loadCharacter() {
 }
 
 function populateAllForms() {
-  const fields = {
-    'c-name':'name','c-handle':'handle','c-age':'age','c-gender':'gender',
-    'c-aliases':'aliases','c-rep':'rep','c-eddies':'eddies','c-notes':'notes'
-  };
-  Object.entries(fields).forEach(([id, key]) => {
+  // The whole harvest map, not just the identity fields — see FORM_FIELDS.
+  // ?? rather than || so a legitimate 0 (rep, cash) still shows.
+  Object.entries(FORM_FIELDS).forEach(([id, key]) => {
     const el = document.getElementById(id);
-    if (el) el.value = char[key] || '';
+    if (el) el.value = char[key] ?? '';
   });
+  renderLifepathView();          // rebuilds the wizard's lp-* inputs from the loaded char
+  buildLifepathRelationships();  // and its relationship textareas
   updateSidebarIdentity();
   updateStatInputValues();     // keep the wizard's stat inputs in sync with the loaded char
   if (char.portrait) {
@@ -2727,12 +2815,7 @@ function renderFullSheet() {
 
     <div class="cs-section">
       <div class="cs-title">Lifepath (all editable)</div>
-      <div class="lp-grid">
-        ${lifepathDefs.map(d => `<div class="lp-item">
-          <div class="lp-label">${d.label}</div>
-          <input value="${(char.lifepath[d.key]||'').replace(/"/g,'&quot;')}" style="font-size:12px" oninput="char.lifepath['${d.key}']=this.value;saveToLocalStorage()">
-        </div>`).join('')}
-      </div>
+      <div id="sheet-lifepath-grid" class="lp-grid">${lifepathGridHTML('slp-')}</div>
     </div>
 
     <div class="cs-section">
