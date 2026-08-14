@@ -1948,6 +1948,7 @@ Be concrete. Use Night City gang names and CP:R rules language. Every entry unde
   out.textContent = text;
   btn.textContent = '⚡ Generate Encounter'; btn.disabled = false;
   document.getElementById('enc-save-btn').style.display = 'inline-flex';
+  encShowImportBtn();
   window._lastEnc = { type, diff, district, text };
   const titleLine = text.split('\n').find(l => l.startsWith('ENCOUNTER TITLE:'));
   window._lastEnc.title = titleLine ? titleLine.replace('ENCOUNTER TITLE:', '').trim() : type + ' in ' + district;
@@ -1984,7 +1985,160 @@ function viewEnc(i) {
   document.getElementById('enc-output').textContent = encRoster[i].text;
   const card = document.getElementById('enc-output-card');
   card.style.display = 'block';
+  // Viewing a saved encounter makes it the current one, so the import button
+  // works on it too — otherwise only a freshly generated encounter could be
+  // sent to the tracker, which is the wrong way round for prepped sessions.
+  window._lastEnc = encRoster[i];
+  encShowImportBtn();
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── ENCOUNTER → SESSION TRACKER ────────────────────────────────────
+// The ENEMIES block is the only part of an encounter carrying per-combatant
+// numbers, so it is the only part worth turning into tracker entries. Both the
+// offline template and the AI prompt put one enemy type per line:
+//   3x Maelstrom Ganger — STATS: REF 6 | BODY 5 | HP 35 | ARMOR: Kevlar (SP 11) | WEAPON: Heavy Pistol (3d6 dmg, ROF 2)
+// The model wanders from that shape, so read labelled values wherever they
+// land on the line instead of trusting field order or separators.
+
+const ENC_MAX_IMPORT = 24;        // a Meat Grinder can list a lot of bodies
+
+// Everything between "ENEMIES:" and the next ALL-CAPS section label.
+function encEnemyLines(text) {
+  const lines = String(text || '').split('\n');
+  const start = lines.findIndex(l => /^\s*ENEMIES\s*:/i.test(l));
+  if (start < 0) return [];
+  const out = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*[A-Z][A-Z /&']{3,}\s*:/.test(l)) break;   // COMPLICATIONS:, OBJECTIVES:, ...
+    const t = l.replace(/^\s*[-*•]\s*/, '').trim();
+    if (t) out.push(t);
+  }
+  // The count may sit on the ENEMIES: line itself when there is only one type.
+  const inline = lines[start].replace(/^\s*ENEMIES\s*:/i, '').trim();
+  if (inline) out.unshift(inline);
+  return out;
+}
+
+// Real CP:RED gear names contain brackets of their own — "Superchrome® Glam
+// Rifle (Centurion Essentials)", "Handprint Glove (—)" — so the trailing stat
+// group is the LAST parenthesised run, not the first. Splitting on the first
+// one silently loses every weapon whose name is bracketed.
+const ENC_STAT_LABELS = 'ARMOR|WEAPON|STATS|HP|REF|BODY|COOL|INT|TECH|WILL|DEX|MOVE|EMP|LUCK|SP';
+
+function encField(line, label) {
+  const re = new RegExp(label + '\\s*:?\\s*(.+?)(?=\\s*\\||\\s*[,;]?\\s*\\b(?:' + ENC_STAT_LABELS + ')\\b\\s*:|$)', 'i');
+  const m = line.match(re);
+  return m ? m[1].trim().replace(/[,;]+$/, '').trim() : '';
+}
+
+// Walk back from the end counting depth rather than pattern-matching: the
+// trailing group nests, e.g. "FangFist (SlamDance Inc.) (2d6 / 4d6 (blade
+// deployed) dmg, ROF 2/1)". A regex cannot balance that, and failing to
+// balance it loses the damage entirely.
+function encSplitTrailingParens(v) {
+  const s = String(v || '').trim();
+  if (!s.endsWith(')')) return { name: s, detail: '' };
+  let depth = 0;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === ')') depth++;
+    else if (s[i] === '(' && --depth === 0) return { name: s.slice(0, i).trim(), detail: s.slice(i + 1, -1).trim() };
+  }
+  return { name: s, detail: '' };   // unbalanced — treat the whole thing as a name
+}
+
+function parseEncounterEnemies(text) {
+  const num = (s, k, dflt) => { const m = s.match(new RegExp('\\b' + k + '\\b\\s*[:=]?\\s*(\\d+)', 'i')); return m ? +m[1] : dflt; };
+  return encEnemyLines(text).map(line => {
+    const cm = line.match(/^(\d+)\s*[x×]\s*/i);
+    const count = cm ? Math.max(1, +cm[1]) : 1;
+    const rest = cm ? line.slice(cm[0].length) : line;
+
+    // Name runs up to the first separator or the stats themselves, whichever
+    // comes first — the model is inconsistent about which it uses.
+    let name = rest.split(/\s+[—–-]\s+|\s*\|\s*|\bSTATS\b\s*:?/i)[0].trim()
+      .replace(/[(,;:]\s*$/, '').trim();
+    if (!name) name = 'Enemy';
+
+    const armor = encSplitTrailingParens(encField(rest, 'ARMOR'));
+    const weapon = encSplitTrailingParens(encField(rest, 'WEAPON'));
+    // SP lives in the trailing group when present, otherwise anywhere on the line.
+    const spOnly = /SP/i.test(armor.detail) ? (+(armor.detail.match(/(\d+)/) || [, 0])[1]) : num(rest, 'SP', 0);
+    const wpnDet = weapon.detail;
+    const body = num(rest, 'BODY', 5);
+
+    return {
+      count, name,
+      stats: {
+        INT: num(rest, 'INT', 5), REF: num(rest, 'REF', 5), DEX: num(rest, 'DEX', 5),
+        TECH: num(rest, 'TECH', 5), COOL: num(rest, 'COOL', 5), WILL: num(rest, 'WILL', 5),
+        LUCK: num(rest, 'LUCK', 5), MOVE: num(rest, 'MOVE', 5), BODY: body, EMP: num(rest, 'EMP', 5)
+      },
+      // No HP given? Fall back to the CP:R derivation rather than a flat guess.
+      hp: num(rest, 'HP', 10 + 5 * body),
+      armorName: armor.name,
+      armorSP: spOnly,
+      weaponName: weapon.name,
+      // Not every weapon rolls dice — plenty of CP:RED gear is "Special dmg",
+      // and a blank damage column on a tracker card is worse than the word.
+      weaponDamage: ((wpnDet.match(/([^,;]+?)\s*\bdmg\b/i) || wpnDet.match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)/i) || [, ''])[1] || '').trim(),
+      weaponRof: (wpnDet.match(/ROF\s*:?\s*(\d+)/i) || [, ''])[1],
+      line
+    };
+  }).filter(e => e.name && e.name.toLowerCase() !== 'none');
+}
+
+// One tracker entry per body, so each has its own HP, wounds and initiative —
+// a single "3x Ganger" row would defeat the point of a tracker.
+function buildEncounterNPCs(text, encTitle) {
+  const groups = parseEncounterEnemies(text);
+  const out = [];
+  const stamp = Date.now();
+  groups.forEach((g, gi) => {
+    const n = Math.min(g.count, Math.max(0, ENC_MAX_IMPORT - out.length));
+    for (let i = 0; i < n; i++) {
+      out.push({
+        id: 'enc_' + stamp + '_' + gi + '_' + i, isNPC: true,
+        name: g.count > 1 ? `${g.name} ${i + 1}` : g.name,
+        handle: '', role: 'Solo',
+        stats: { ...g.stats },
+        hp: g.hp, maxHp: g.hp, wounds: 0, eddies: 0,
+        skills: {},
+        weapons: g.weaponName ? [{ name: g.weaponName, damage: g.weaponDamage, rof: g.weaponRof, ammo: '', notes: '' }] : [],
+        armor: { head: '', headSP: 0, body: g.armorName, bodySP: g.armorSP, shield: '', shieldSP: 0 },
+        cyberware: [], gear: [], vehicles: [], netPrograms: [],
+        fromEncounter: encTitle || '',
+        notes: g.line, trackerNotes: '', trackerCrits: ''
+      });
+    }
+  });
+  return out;
+}
+
+async function importEncounterEnemies() {
+  const enc = window._lastEnc;
+  if (!enc) { notify('Generate or open an encounter first', 'error'); return; }
+  const npcs = buildEncounterNPCs(enc.text, enc.title);
+  if (!npcs.length) { notify('No enemy stat blocks found under ENEMIES in this encounter', 'error'); return; }
+
+  const total = parseEncounterEnemies(enc.text).reduce((a, g) => a + g.count, 0);
+  if (total > npcs.length && !confirm(`This encounter lists ${total} enemies. Import the first ${npcs.length}?`)) return;
+
+  for (const npc of npcs) {
+    if (ipc) await callIPC('store-save', 'npcs', npc);
+    else { savedChars.push(npc); localStorage.setItem('cpred_chars', JSON.stringify(savedChars)); }
+    if (!sessionCharIds.some(x => String(x) === String(npc.id))) sessionCharIds.push(npc.id);
+  }
+  localStorage.setItem('cpred_session_ids', JSON.stringify(sessionCharIds));
+  notify(`${npcs.length} enem${npcs.length === 1 ? 'y' : 'ies'} added to the Session Tracker`, 'success');
+  switchEncTab('session');
+  if (typeof renderSessionTracker === 'function') renderSessionTracker();
+}
+
+function encShowImportBtn() {
+  const b = document.getElementById('enc-import-btn');
+  if (b) b.style.display = 'inline-flex';
 }
 
 function deleteEnc(i) {
