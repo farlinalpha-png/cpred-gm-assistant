@@ -1252,27 +1252,410 @@ function populateAllForms() {
   syncTrackerFromChar();
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// PRINT / PDF CHARACTER SHEET
+// ═══════════════════════════════════════════════════════════════════
+// Built from `char`, never from the Full Sheet's DOM. The Full Sheet is an
+// editor — every value there is an <input>, every list has a ✕ button, and the
+// whole thing is prefaced by a "click any dashed-underline value" hint — so the
+// old innerHTML scrape printed form widgets and UI copy instead of a character
+// sheet. Rebuilding from the character makes the export typeset text by
+// construction; there is no chrome left to strip.
+//
+// Format follows the official R. Talsorian sheet (Character Sheet.pdf is
+// 828×648pt, DataPack is 792×612 — both LANDSCAPE): white stock, one red
+// accent, hairline keylines, condensed all-caps labels sitting over black
+// values, and a four-column flow so the page packs full instead of leaving the
+// bottom third empty.
+
+const psEsc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// An empty field prints as a rule to write on, the way the paper sheet does —
+// a page of "—" reads as broken data rather than as a blank to fill in.
+const psVal = v => (v === 0 || (v && String(v).trim())) ? psEsc(v) : '<i class="bl"></i>';
+// n write-on rules — what the paper sheet prints where there is nothing to say yet
+const psRules = n => `<div class="fill">${'<i></i>'.repeat(n)}</div>`;
+
+function psStyles() {
+  return `
+  /* Letter LANDSCAPE, matching the official sheet's orientation. Margins are
+     tight because the whole point is density; preferCSSPageSize in main.js
+     makes this @page authoritative rather than the printer's own default. */
+  @page{size:11in 8.5in;margin:.24in .28in .20in}
+  *{box-sizing:border-box;margin:0;padding:0}
+  /* No webfont link: the export renders in an offscreen window that may have no
+     network. Bahnschrift ships with Windows and is the closest stock face to the
+     sheet's condensed techno labels; the stack degrades to Arial Narrow / DIN. */
+  :root{
+    --ink:#0c0d11; --red:#c8102e; --rule:#98a1ae; --hair:#d3d8e0;
+    --soft:#eef0f4; --mute:#5d6470;
+    --sans:'Bahnschrift','Segoe UI',Arial,Helvetica,sans-serif;
+    --cond:'Bahnschrift SemiCondensed','Bahnschrift','Arial Narrow','DIN Condensed',var(--sans);
+    --num:'Consolas','Roboto Mono','Courier New',monospace;
+  }
+  html,body{background:#fff;color:var(--ink);font-family:var(--sans);font-size:8pt;line-height:1.28;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+  /* ── masthead ─────────────────────────────────────────────── */
+  .mast{display:flex;gap:8px;align-items:stretch;border:1.2pt solid var(--ink);
+    border-left:4.5pt solid var(--red);padding:3px 7px;margin-bottom:6px}
+  .mug{width:50px;height:50px;object-fit:cover;border:1pt solid var(--ink);flex:0 0 50px;align-self:center}
+  .mug-x{width:50px;height:50px;border:1pt solid var(--hair);flex:0 0 50px;align-self:center}
+  .who{flex:1 1 auto;min-width:0;align-self:center}
+  .who h1{font-family:var(--cond);font-size:17pt;font-weight:700;line-height:1;letter-spacing:.2px;
+    text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .who .alias{font-family:var(--cond);font-size:8pt;color:var(--red);letter-spacing:.6px;margin-top:1px}
+  .who .meta{font-family:var(--cond);font-size:6pt;color:var(--mute);letter-spacing:.5px;
+    text-transform:uppercase;margin-top:2px}
+  .role-chip{display:inline-block;background:var(--red);color:#fff;font-family:var(--cond);font-size:8pt;
+    font-weight:700;letter-spacing:1.2px;text-transform:uppercase;padding:1px 7px;vertical-align:2px}
+  /* Numbers the GM calls for constantly, kept on the top edge like the paper sheet. */
+  .vitals{display:flex;gap:0;align-self:stretch;flex:0 0 auto}
+  .vital{border-left:.6pt solid var(--rule);padding:1px 6px;text-align:center;min-width:48px;
+    display:flex;flex-direction:column;justify-content:center}
+  .vital b{font-family:var(--num);font-size:11pt;font-weight:700;line-height:1;display:block}
+  .vital span{font-family:var(--cond);font-size:6pt;letter-spacing:.8px;color:var(--mute);
+    text-transform:uppercase;display:block;margin-top:2px;white-space:nowrap}
+  .vital.hot b{color:var(--red)}
+
+  /* ── the four-column flow ─────────────────────────────────── */
+  .flow{columns:4;column-gap:11px;column-rule:.4pt solid var(--hair)}
+  section{break-inside:avoid;margin-bottom:7px}
+  section.run{break-inside:auto}          /* skills are allowed to continue in the next column */
+  h2{font-family:var(--cond);font-size:8pt;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
+    background:var(--ink);color:#fff;padding:1.5px 5px;break-after:avoid;margin-bottom:3px}
+  /* The category rule already spans the column, so the column legend rides on
+     its empty right-hand end — every category carries its own "STAT LVL BASE"
+     for free, the way the printed sheet does, instead of one legend at the top
+     that a reader three columns away can no longer see. */
+  h3{display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--cond);font-size:7pt;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;
+    color:var(--red);border-bottom:.8pt solid var(--red);margin:3px 0 1px;break-after:avoid}
+  h3:first-child{margin-top:0}
+  h3 u{font-size:6pt;font-weight:400;letter-spacing:.6px;color:var(--rule);text-decoration:none;
+    flex:0 0 auto;padding-left:6px}
+
+  /* generic label/value row: label left in condensed caps, value right */
+  .r{display:flex;justify-content:space-between;gap:5px;align-items:baseline;
+    border-bottom:.4pt solid var(--hair);padding:.8px 0;break-inside:avoid}
+  .r>.k{font-family:var(--cond);font-size:7pt;letter-spacing:.5px;text-transform:uppercase;color:var(--mute);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .r>.v{font-family:var(--num);font-size:8pt;font-weight:700;white-space:nowrap}
+  .r.wide>.k{flex:0 0 auto}
+  .r.wide>.v{white-space:normal;text-align:right;min-width:0}
+  .bl{display:inline-block;width:34px;border-bottom:.6pt solid var(--rule);height:7px}
+  .lp .v .bl,.note .bl{display:block;width:100%;height:8px}
+
+  /* stat ladder — mirrors the official sheet's left rail */
+  .stat{display:flex;align-items:center;gap:4px;border-bottom:.4pt solid var(--hair);padding:1px 0}
+  .stat .n{font-family:var(--cond);font-size:8pt;font-weight:700;letter-spacing:1.4px;flex:1 1 auto}
+  .stat .b{font-family:var(--num);font-size:11pt;font-weight:700;min-width:17px;text-align:center;
+    border:.7pt solid var(--ink);line-height:1.15}
+  .stat .e{font-family:var(--cond);font-size:6pt;color:var(--red);text-align:right;white-space:nowrap}
+  .stat.up .n{color:var(--red)}
+
+  /* skills — name, linked stat, level, and the number you actually roll against */
+  .sk{display:flex;align-items:baseline;gap:3px;padding:0;border-bottom:.35pt solid var(--hair);
+    break-inside:avoid;font-size:7pt;line-height:1.18}
+  .sk .nm{flex:1 1 auto;font-family:var(--cond);letter-spacing:.1px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;color:var(--mute)}
+  .sk .st{font-family:var(--cond);font-size:6pt;color:var(--rule);width:22px;text-align:right;letter-spacing:.4px}
+  .sk .lv{font-family:var(--num);width:11px;text-align:right;color:var(--rule)}
+  .sk .bs{font-family:var(--num);font-weight:700;width:15px;text-align:right;color:var(--rule)}
+  .sk.on .nm{color:var(--ink);font-weight:600}
+  .sk.on .st{color:var(--mute)}
+  .sk.on .lv{color:var(--ink)}
+  .sk.on .bs{color:var(--red)}
+  .sk .spec{font-style:italic;color:var(--red)}
+  .skcat{break-inside:avoid;-webkit-column-break-inside:avoid}
+
+  /* one-line item rows: twelve pieces of cyberware at two lines each is most of
+     a column spent on the words "HL" */
+  .cw{display:flex;justify-content:space-between;gap:4px;align-items:baseline;
+    border-bottom:.4pt solid var(--hair);padding:.3px 0;break-inside:avoid}
+  .cw .n{font-family:var(--cond);font-size:7pt;flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cw .h{font-family:var(--num);font-size:6pt;color:var(--mute);white-space:nowrap}
+
+  /* two-line item blocks (weapons, vehicles) — the narrow-column pattern the
+     official DataPack sheet uses, so nothing needs a wide table */
+  .it{break-inside:avoid;padding:1.5px 0;border-bottom:.4pt solid var(--hair)}
+  .it .t{font-family:var(--cond);font-size:8pt;font-weight:700;letter-spacing:.3px;text-transform:uppercase}
+  .it .d{font-family:var(--num);font-size:6pt;color:var(--mute);line-height:1.25}
+  .it .d b{color:var(--ink)}
+  .it .up{font-family:var(--cond);font-size:6pt;color:var(--red);line-height:1.25}
+
+  .gear{font-family:var(--cond);font-size:7pt;line-height:1.45}
+  .gear span{display:block;border-bottom:.35pt solid var(--hair)}
+  .gear i{font-style:normal;font-family:var(--num);float:right;font-weight:700}
+
+  .lp{break-inside:avoid;border-bottom:.4pt solid var(--hair);padding:.5px 0;line-height:1.2}
+  .lp .k{font-family:var(--cond);font-size:6pt;letter-spacing:.7px;text-transform:uppercase;color:var(--red);display:block}
+  .lp .v{font-family:var(--cond);font-size:7pt;line-height:1.15;display:block}
+  .note{font-size:7pt;line-height:1.35;white-space:pre-wrap}
+  .fill i{display:block;height:${PS_PAGE.line - 1}px;border-bottom:.4pt solid var(--hair);break-inside:avoid}
+  .fine{font-family:var(--cond);font-size:6pt;color:var(--mute);letter-spacing:.3px;margin-top:2px}
+  `;
+}
+
+// A skill category that runs past a column boundary arrives in the next column
+// with no heading on it, and CSS cannot repeat a heading across a column break.
+// Categories therefore stay whole (break-inside:avoid) — but Education has 16
+// skills and Technique 15, and holding blocks that tall together wastes about a
+// fifth of the page in packing slack. So long categories are pre-split into
+// labelled chunks small enough to place freely, which is the same "Education
+// Skills … Education Skills" continuation the printed RTG sheet uses.
+const PS_CHUNK = 6;
+function psSkillChunks(cat, list) {
+  const n = Math.ceil(list.length / PS_CHUNK) || 1;
+  const per = Math.ceil(list.length / n);
+  return Array.from({ length: n }, (_, i) => ({
+    label: i ? cat + ' cont.' : cat,
+    cont: i > 0,
+    rows: list.slice(i * per, (i + 1) * per)
+  })).filter(c => c.rows.length);
+}
+
+// The whole PDF payload for one character: a standalone document with no
+// scripts, no form controls and no app stylesheet.
+function buildPrintSheetHTML(c, fit = {}) {
+  const { eff, statMods } = effectiveStats(c);
+  const autoMods = autoSkillModDetail(c);
+  const hp = 10 + 5 * (eff.BODY || 5);
+  const cur = c.hp !== undefined ? c.hp : hp;
+  const hl = totalHL(c);
+  const hum = currentHumanity(c);
+  const maxHum = (c.stats.EMP || 5) * 10;
+  const det = CPRED_DATA.roleAbilityDetails[c.role] || {};
+
+  const vital = (label, value, hot) =>
+    `<div class="vital${hot ? ' hot' : ''}"><b>${psEsc(value)}</b><span>${psEsc(label)}</span></div>`;
+  const row = (k, v) => `<div class="r"><span class="k">${psEsc(k)}</span><span class="v">${psVal(v)}</span></div>`;
+
+  // ── masthead ──
+  const meta = [c.age ? 'Age ' + c.age : '', c.gender, c.aliases ? 'AKA ' + c.aliases : '']
+    .filter(Boolean).map(psEsc).join(' · ');
+  const mast = `<div class="mast">
+    ${c.portrait ? `<img class="mug" src="${psEsc(c.portrait)}">` : '<div class="mug-x"></div>'}
+    <div class="who">
+      <h1>${psEsc(c.name || 'Unnamed Edgerunner')}</h1>
+      <div class="alias">${c.handle ? '&ldquo;' + psEsc(c.handle) + '&rdquo; &nbsp;' : ''}<span class="role-chip">${psEsc(c.role || '—')}</span></div>
+      ${meta ? `<div class="meta">${meta}</div>` : ''}
+    </div>
+    <div class="vitals">
+      ${vital('HP now', cur, cur <= Math.ceil(hp / 2))}
+      ${vital('HP max', hp)}
+      ${vital('Ser. wounded', Math.ceil(hp / 2))}
+      ${vital('Death save', eff.BODY || 5)}
+      ${vital('Humanity', hum + '/' + maxHum, hum < 20)}
+      ${vital('Reputation', c.rep || 0)}
+      ${vital('IP', c.trackerIP || 0)}
+      ${vital('Eddies', '€$' + (c.eddies || 0))}
+    </div>
+  </div>`;
+
+  // ── stats ──
+  const stats = `<section><h2>Stats</h2>
+    ${CPRED_DATA.stats.map(s => {
+      const b = c.stats[s] || 5, e = eff[s] || b, d = (statMods[s] || 0);
+      return `<div class="stat${d ? ' up' : ''}"><span class="n">${s}</span>
+        <span class="e">${d ? `base ${b}` : ''}</span><span class="b">${e}</span></div>`;
+    }).join('')}
+  </section>`;
+
+  // ── role ability ──
+  const subs = (CPRED_DATA.roleSubAbilities[c.role] && c.roleSubRanks)
+    ? CPRED_DATA.roleSubAbilities[c.role].subs
+        .filter(([n]) => (c.roleSubRanks[n] || 0) > 0)
+        .map(([n]) => `${n} ${c.roleSubRanks[n]}`).join(' · ')
+    : '';
+  // The full rules text runs to a paragraph; on a sheet you want the reminder,
+  // not the rulebook. Cut at the last sentence end that fits, or failing that
+  // the last clause, so it never stops mid-phrase on a dangling "and it".
+  const how = (() => {
+    const t = (det.how || '').trim();
+    if (t.length <= 175) return t;
+    const head = t.slice(0, 175);
+    const at = Math.max(head.lastIndexOf('. '), head.lastIndexOf('; '));
+    if (at > 60) return head.slice(0, at + 1);
+    const comma = head.lastIndexOf(', ');
+    return (comma > 60 ? head.slice(0, comma) : head.replace(/\s\S*$/, '')) + '…';
+  })();
+  const role = `<section><h2>Role Ability</h2>
+    ${row(det.name || c.role || 'Role', 'Rank ' + (c.roleAbilityRank || 4))}
+    ${subs ? `<div class="lp"><div class="k">Specialties</div><div class="v">${psEsc(subs)}</div></div>` : ''}
+    ${how ? `<div class="fine">${psEsc(how)}</div>` : ''}
+  </section>`;
+
+  // ── skills: every skill, the way the printed sheet lists them ──
+  const skills = `<section class="run"><h2>Skills</h2>
+    <div class="fine" style="margin:0 0 2px">BASE = effective STAT + LVL + every equipment, role and manual modifier. Roll 1d10 + BASE.</div>
+    ${Object.entries(CPRED_DATA.skills).flatMap(([cat, list]) => psSkillChunks(cat, list)).map(({ label, cont, rows }, ci) => `
+      <div class="skcat">${!cont || !fit.keepLabels || fit.keepLabels.has(ci)
+        ? `<h3>${psEsc(label)}<u>Stat &nbsp;Lvl &nbsp;Base</u></h3>` : ''}
+      ${rows.map(sk => {
+        const lvl = c.skills[sk.name] || 0;
+        const mod = autoSkillMod(autoMods, sk.name) + otherSkillMod(c, sk.name);
+        const base = (eff[sk.stat] || 5) + lvl + mod;
+        const on = lvl > 0 || mod !== 0;
+        const spec = (c.skillSpecs && c.skillSpecs[sk.name]) || '';
+        return `<div class="sk${on ? ' on' : ''}"><span class="nm">${psEsc(sk.name)}${spec ? ` <span class="spec">${psEsc(spec)}</span>` : ''}</span>
+          <span class="st">${sk.stat}</span><span class="lv">${lvl || '·'}</span><span class="bs">${on ? base : '·'}</span></div>`;
+      }).join('')}</div>`).join('')}
+  </section>`;
+
+  // ── weapons / armor ──
+  const weapons = `<section><h2>Weapons</h2>
+    ${c.weapons.length ? c.weapons.map(w => `<div class="it">
+      <div class="t">${psEsc(w.name)}</div>
+      <div class="d"><b>${psEsc(w.damage || '—')}</b> dmg · ROF ${psEsc(w.rof || '—')} · Ammo ${psVal(w.ammo)}${w.notes ? '<br>' + psEsc(w.notes) : ''}</div>
+    </div>`).join('') : psRules(4)}
+  </section>
+  <section><h2>Armor</h2>
+    ${['head', 'body', 'shield'].map(k => {
+      const sp = c.armor && c.armor[k + 'SP'];
+      return `<div class="r wide"><span class="k">${k}${sp ? ' &nbsp;SP ' + sp : ''}</span><span class="v" style="font-family:var(--cond);font-weight:600">${psVal(c.armor && c.armor[k])}</span></div>`;
+    }).join('')}
+    <div class="fine">Armor penalty applies to REF, DEX and MOVE.</div>
+  </section>
+  <!-- The app tracks no critical injuries, but the official sheet gives them a
+       box because they are written down mid-fight. Ruled space is the useful
+       thing to print here, not an empty data field. -->
+  <section><h2>Critical Injuries</h2>
+    ${psRules(5)}
+    <div class="fine">−2 to all Actions while Seriously Wounded (HP at or below ${Math.ceil(hp / 2)}).</div>
+  </section>`;
+
+  // ── cyberware / vehicles / gear ──
+  // Every section prints whether or not the character has anything in it: an
+  // empty list on a sheet about to be printed is not "no cyberware", it is room
+  // to write cyberware in. The paper sheet is ruled space for exactly this.
+  const cyber = `<section><h2>Cyberware &nbsp;<span style="font-weight:400">HL ${hl} · Humanity ${hum}/${maxHum}</span></h2>
+    ${c.cyberware.length ? c.cyberware.map(cw => `<div class="cw"><span class="n">${psEsc(cw.name)}</span><span class="h">HL ${psEsc(cw.hl ?? 0)}</span></div>
+      ${(cw.upgrades || []).length ? `<div class="it"><div class="up">${cw.upgrades.map(u => psEsc('◆ ' + u.name + (u.effect ? ' — ' + u.effect : ''))).join('<br>')}</div></div>` : ''}`).join('')
+      : psRules(6)}
+  </section>`;
+
+  const vehicles = `<section><h2>Vehicles</h2>
+    ${(c.vehicles && c.vehicles.length) ? c.vehicles.map(v => `<div class="it"><div class="t">${psEsc(v.name)}</div>
+      <div class="d">SDP <b>${psEsc(v.curSDP !== undefined ? v.curSDP : v.sdp)}</b>/${psEsc(v.sdp)} · SP ${psEsc(v.sp)} · ${psEsc(v.seats)} seat${v.seats == 1 ? '' : 's'}${v.upgrades && v.upgrades.length ? '<br>' + psEsc(v.upgrades.join(', ')) : ''}</div>
+    </div>`).join('') : psRules(3)}
+  </section>`;
+
+  const gear = `<section><h2>Gear</h2>
+    ${c.gear.length ? `<div class="gear">${c.gear.map(g => `<span><i>${psEsc(g.qty || 1)}</i>${psEsc(g.name)}</span>`).join('')}</div>`
+      : psRules(8)}
+  </section>`;
+
+  // ── lifepath / notes ──
+  // The lifepath editor uses a `__other__` sentinel in its dropdown to mean
+  // "typed in below". That is an editor concept: if one ever reaches the stored
+  // value it must print as an unfilled field, not as the sentinel.
+  const lpVal = v => (typeof v === 'string' && /^__.*__$/.test(v.trim())) ? '' : v;
+  const lifepath = `<section class="run"><h2>Lifepath</h2>
+    ${lifepathDefs.map(d => `<div class="lp"><div class="k">${psEsc(d.label)}</div>
+      <div class="v">${psVal(lpVal(c.lifepath && c.lifepath[d.key]))}</div></div>`).join('')}
+  </section>`;
+
+  // Write-on rules, added by the fitter when the last page would otherwise stop
+  // half way down. The paper sheet ends in ruled blank space too, so filling the
+  // remainder this way reads as a form rather than as content that ran out.
+  const filler = fit.lines > 0
+    ? psRules(fit.lines) : '';
+  const notes = `<section class="run"><h2>Notes</h2><div class="note">${psVal(c.notes)}</div>${filler}</section>`;
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>${psEsc(c.name || 'Character')} — Cyberpunk RED character sheet</title>
+<style>${psStyles()}${fit.zoom && fit.zoom !== 1 ? `\nbody{zoom:${fit.zoom}}` : ''}</style></head><body>
+${mast}
+<div class="flow">${stats}${role}${skills}${weapons}${cyber}${vehicles}${gear}${lifepath}${notes}</div>
+</body></html>`;
+}
+
+// Printed page geometry at 96dpi, kept in step with the @page rule above.
+const PS_PAGE = { w: (11 - 0.56) * 96, h: (8.5 - 0.44) * 96, line: 11 };
+
+// How full the pages come out depends on the exact height of a four-column
+// flow, which only the layout engine can tell us. So lay the document out
+// offscreen at the real printed content size and measure it: a small overshoot
+// gets scaled back onto the page it nearly fitted, and a last page that would
+// end early gets padded with write-on rules. Falls back to the unfitted
+// document if anything about the measurement fails.
+function measurePrintFlow(html) {
+  return new Promise(resolve => {
+    const f = document.createElement('iframe');
+    f.setAttribute('aria-hidden', 'true');
+    f.style.cssText = `position:fixed;left:-20000px;top:0;border:0;visibility:hidden;
+      width:${PS_PAGE.w}px;height:${PS_PAGE.h}px`;
+    let done = false;
+    const finish = v => { if (done) return; done = true; f.remove(); resolve(v); };
+    f.onload = () => {
+      try {
+        const d = f.contentDocument;
+        const mast = d.querySelector('.mast'), flow = d.querySelector('.flow');
+        // Appending the iframe fires one load for the empty document before
+        // srcdoc is parsed; that one has nothing to measure, so wait for the next.
+        if (!mast || !flow) return;
+        const mastH = mast.getBoundingClientRect().height + parseFloat(getComputedStyle(mast).marginBottom || 0);
+        const ncol = parseInt(getComputedStyle(flow).columnCount) || 4;
+        // Which skill chunks landed at the top of a column. Every column in a
+        // multicol starts at the flow's top edge, so that is the whole test.
+        const top = flow.getBoundingClientRect().top;
+        const starts = [...d.querySelectorAll('.skcat')]
+          .map((el, i) => el.getBoundingClientRect().top - top < 3 ? i : -1).filter(i => i >= 0);
+        finish({ colInk: flow.getBoundingClientRect().height * ncol, mastH, ncol, starts });
+      } catch (e) { finish(null); }
+    };
+    document.body.appendChild(f);
+    f.srcdoc = html;
+    setTimeout(() => finish(null), 4000);
+  });
+}
+
+async function fitPrintSheet(c) {
+  // A continuation heading only earns its place at the top of a column. When a
+  // chunk lands directly under its own first half, "Education cont." sitting
+  // mid-column is noise — so lay it out, see which chunks actually began a
+  // column, and keep a heading only for those and for each category's first
+  // chunk. Dropping headings shortens the flow and moves chunks, so repeat
+  // until the set stops growing; it only ever grows, so it terminates.
+  let keep = null;
+  for (let pass = 0; pass < 3; pass++) {
+    const probe = await measurePrintFlow(buildPrintSheetHTML(c, { keepLabels: keep }));
+    if (!probe || !probe.colInk) return buildPrintSheetHTML(c);
+    const next = new Set(keep || []);
+    const before = next.size;
+    probe.starts.forEach(i => next.add(i));
+    if (keep && next.size === before) break;
+    keep = next;
+  }
+  const m = await measurePrintFlow(buildPrintSheetHTML(c, { keepLabels: keep }));
+  if (!m || !m.colInk) return buildPrintSheetHTML(c, { keepLabels: keep });
+  const cap1 = (PS_PAGE.h - m.mastH) * m.ncol;   // page 1 loses the masthead band
+  const capN = PS_PAGE.h * m.ncol;
+  const pagesFor = ink => ink <= cap1 ? 1 : 1 + Math.ceil((ink - cap1) / capN);
+  const capFor = p => cap1 + (p - 1) * capN;
+
+  let pages = pagesFor(m.colInk), zoom = 1;
+  // A sheet that misses by a few percent is worth shrinking rather than paying a
+  // whole extra page for; below 0.9 the type gets too small to read at the table.
+  if (pages > 1) {
+    const want = capFor(pages - 1) / m.colInk;
+    if (want >= 0.9) { zoom = Math.floor(want * 200) / 200; pages -= 1; }
+  }
+  // Whatever page count we land on, pad the tail so the last page reads as full.
+  // Everything here is in printed pixels: zooming the body shrinks the content,
+  // so both the ink and each filler rule cost `zoom` times their CSS height.
+  const slack = capFor(pages) - m.colInk * zoom;
+  const lines = slack > capFor(pages) * 0.06
+    ? Math.floor(slack * 0.96 / (PS_PAGE.line * zoom)) : 0;
+  return buildPrintSheetHTML(c, { zoom, lines: Math.min(Math.max(lines, 0), 300), keepLabels: keep });
+}
+
 async function exportPDF() {
   collectAllFormData();
-  renderFullSheet();
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
-    <style>
-      body{background:#fff;color:#111;font-family:'Rajdhani',sans-serif;padding:20px}
-      .cs-section{border:1px solid #ddd;border-radius:6px;padding:14px;margin-bottom:12px;break-inside:avoid}
-      .cs-title{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;letter-spacing:2px;color:#b00;text-transform:uppercase;margin-bottom:10px}
-      .stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
-      .stat-box{border:1px solid #ddd;border-radius:4px;padding:6px;text-align:center}
-      .stat-box-label{font-family:'Share Tech Mono',monospace;font-size:8px;color:#888;letter-spacing:1px;text-transform:uppercase}
-      .stat-box-val{font-family:'Orbitron',monospace;font-size:18px;font-weight:700;color:#005580}
-      .divider{height:1px;background:#eee;margin:10px 0}
-      .badge{display:inline-block;padding:2px 6px;border-radius:3px;font-family:'Share Tech Mono',monospace;font-size:8px;background:#eee;margin:1px}
-    </style>
-  </head><body>${document.getElementById('full-sheet-view').innerHTML}</body></html>`;
-
-  const result = await callIPC('export-pdf', html);
+  const html = await fitPrintSheet(char);
+  const result = await callIPC('export-pdf', html, (char.name || 'character') + ' sheet.pdf');
   if (result.success) notify('PDF exported!', 'success');
-  else notify('PDF export not available outside app', 'error');
+  else notify(result.error ? 'PDF export failed: ' + result.error : 'PDF export not available outside app', 'error');
 }
 
 async function exportJSON() {
@@ -2737,11 +3120,20 @@ function renderFullSheet() {
 
     <div class="cs-section">
       <div class="cs-title">Skills — STAT is the linked stat, at its effective value · LVL and OTHER editable · MOD = automatic equipment + role bonuses (hover it for the breakdown)</div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-        ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
-          <div>
-            <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">${cat}</div>
-            <div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;color:var(--dim);padding-bottom:2px">
+      <!-- Multi-column, not grid: the categories are wildly uneven (Performance 2
+           rows vs Education 16), and a grid row stretches to its tallest cell, so
+           the short categories left a page-tall void under them. A column flow
+           packs the next category straight into the gap. Category blocks are NOT
+           break-inside:avoid — keeping them whole leaves a column short by up to
+           a whole category, so instead the rows are the atoms and a category is
+           allowed to continue in the next column, exactly like the printed RTG
+           sheet does. break-after:avoid on the two heading rows stops a heading
+           being orphaned at the foot of a column. columns:<width> <count> keeps
+           it responsive — 3 columns wide, dropping to 2 then 1 as the pane narrows. -->
+      <div style="columns:270px 3;column-gap:14px">
+        ${Object.entries(CPRED_DATA.skills).map(([cat, skills], ci) => `
+            <div style="break-after:avoid;break-inside:avoid;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin:${ci?'12px':'0'} 0 4px">${cat}</div>
+            <div style="break-after:avoid;break-inside:avoid;display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;color:var(--dim);padding-bottom:2px">
               <span>SKILL</span>
               <span style="display:flex;align-items:center;gap:4px">
                 <span style="width:44px;text-align:center">STAT</span>
@@ -2764,7 +3156,7 @@ function renderFullSheet() {
               // modifier moved it, matching the Stats box above.
               const statVal = eff[sk.stat] || 5;
               const statModded = (statMods[sk.stat] || 0) !== 0;
-              return `<div style="display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;padding:1px 0;border-bottom:1px solid rgba(42,42,69,0.4);${active?'background:rgba(0,229,255,0.04)':''}">
+              return `<div style="break-inside:avoid;display:flex;justify-content:space-between;align-items:center;font-family:'Share Tech Mono',monospace;font-size:10px;padding:1px 0;border-bottom:1px solid rgba(42,42,69,0.4);${active?'background:rgba(0,229,255,0.04)':''}">
                 <span style="${mod!==0?'color:var(--green);font-weight:800':lvl>0?'color:var(--neon)':''};overflow:hidden;max-width:34%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <span class="skill-stat" style="width:44px;text-align:center" title="${sk.name} rolls on ${sk.stat}${statModded?` — ${char.stats[sk.stat]||5} base, ${statVal} after modifiers`:''}">${sk.stat} <span style="color:${statModded?'var(--green)':'var(--neon)'}${statModded?';font-weight:800':''}">${statVal}</span></span>
@@ -2773,7 +3165,7 @@ function renderFullSheet() {
                   ${otherModInput(sk.name)}
                   <span data-skill-total="${sk.name}" data-skill-total-blank="1" style="min-width:22px;text-align:right;${(mod!==0||other!==0)?'font-weight:800;color:var(--green)':'color:var(--gold)'}">${active?base:'—'}</span>
                 </span></div>`;
-            }).join('')}</div>`).join('')}
+            }).join('')}`).join('')}
       </div>
       <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is worked out for you from equipment and your role ability (a Tech's Field Expertise, for instance) — hover a MOD value to see what it is made of. OTHER is anything the sheet can't know about (temporary buffs, wound penalties, or backing out a bonus that doesn't apply to this roll). TOTAL = effective STAT + LVL + MOD + OTHER — the number you roll against.</div>
     </div>

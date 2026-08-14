@@ -213,6 +213,16 @@ input[type=number]{text-align:center}
   #main{overflow:visible;padding:0}
   body{background:white;color:black}
   .card,.cs-section{background:white;border:1px solid #ddd;break-inside:avoid}
+  /* Browser-print of the live window (the Print button) shares this path with
+     the PDF export, so it strips the same editor chrome: nothing on paper should
+     look like something you can click. The PDF export does not use this sheet at
+     all — it builds its own document from the character — but the two must not
+     disagree about what belongs on a printed page. */
+  button,.btn,.random-btn,.chip,.gm-note{display:none!important}
+  input,select,textarea{
+    border:none!important;background:transparent!important;color:#000!important;
+    box-shadow:none!important;padding:0!important;appearance:none;-webkit-appearance:none;resize:none}
+  input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 }
 </style>
 </head>
