@@ -631,8 +631,8 @@ CPRED_DATA.vehicleUpgrades = [
 CPRED_DATA.roleAbilityDetails = {
   Solo: { name: "Combat Awareness", how: "Each turn, as a free action, distribute a pool of points equal to your Rank among combat modes: Initiative Reaction (+Initiative), Damage Deflection (subtract from incoming damage), Precision Attack (+Aimed Shot), Spot Weakness (+damage), Threat Detection (can't be surprised at Rank 4+ allocation).", ranks: "Rank = points to distribute each turn. Reallocate at the start of your turn. Higher rank means splitting across several modes or maxing one." },
   Netrunner: { name: "Interface", how: "Interface Rank governs everything in the NET: NET Actions per Meat turn (Rank 1-3: 2 actions, 4-6: 3, 7+: 4 with 8+ allowing 3 while moving), and it adds to Speed, Attack, Defense, and Pathfinder checks with your Cyberdeck.", ranks: "Rank is added to all Netrunning checks. Programs and Black ICE are defeated by reducing REZ to 0." },
-  Tech: { name: "Maker", how: "Split Rank points between four specialties: Field Expertise (repair bonus), Upgrade Expertise (improve items - add a feature or quality tier), Fabrication Expertise (build items from scratch), Invention Expertise (invent new items). Each specialty level unlocks bigger jobs and grants its level as a bonus to those checks.", ranks: "Points allocated at character creation and each Rank up. Upgrading gear typically takes materials worth 50% of item price and a Maker check vs the item DV." },
-  Medtech: { name: "Medicine", how: "Split Rank points between: Surgery (treat Critical Injuries requiring surgery, stabilize the dying), Pharmaceuticals (craft drugs and antidotes), Cryosystem Operation (run cryopumps and cryotanks to keep the nearly-dead alive).", ranks: "Surgery level gates which Critical Injuries you can treat. A Medtech is the only way to bring someone back from Mortally Wounded outside a hospital." },
+  Tech: { name: "Maker", how: "A Tech can fix, improve, modify, make, and invent items with Maker. Every time your Maker Rank goes up by 1 you gain 1 Rank in TWO different Maker Specialties of your choice: Field Expertise (add your Rank in it to Basic Tech, Cybertech, Electronics/Security Tech, Weaponstech, and Land/Sea/Air Vehicle Tech checks made for any non-Maker purpose), Upgrade Expertise (improve items — add a feature or quality tier), Fabrication Expertise (build items from scratch), Invention Expertise (invent new items).", ranks: "Two Specialty Ranks per Maker Rank, and no single Specialty can exceed your Maker Rank — so at Maker Rank 4 you have 8 Specialty Ranks to place, max 4 in any one. Upgrading gear typically takes materials worth 50% of item price and a Maker check vs the item DV." },
+  Medtech: { name: "Medicine", how: "Medtechs keep people alive who should be dead. Whenever your Medicine Rank increases, you choose ONE of three Medicine Specialties — Surgery, Medical Tech (Pharmaceuticals), or Medical Tech (Cryosystem Operation) — and allocate 1 point to it. Surgery gives 2 points of the Surgery Skill per point; Pharmaceuticals and Cryosystem Operation each give 1 point of the Medical Tech Skill per point, and both feed the same skill.", ranks: "One Specialty point per Medicine Rank — at Medicine Rank 4 you have 4 points. Pharmaceuticals and Cryosystem Operation are capped at 5 points each. The Medical Section (pg. 226) has extra uses of the Surgery and Medical Tech Skills that only Medtechs get through this Role Ability: cyberware installation and harvesting, Bodysculpting, and Therapy." },
   Media: { name: "Credibility", how: "Rank determines the strength of the stories you can break and be believed, and gives access to sources, archives, and venues. Use it to convince the public, expose corruption, or call in journalistic favors.", ranks: "Rank 4: local audiences believe you. Rank 7: citywide stories stick. Rank 10: you can take down governments or megacorp divisions with an expose." },
   Exec: { name: "Teamwork", how: "You have corporate resources and a team. Rank determines the number and loyalty of team members (bodyguard, driver, netrunner, assistant, etc.) plus housing, extraction coverage, and corporate perks - and how big a favor you can requisition.", ranks: "Higher rank = more team members with higher skill bases, and better corporate cover when operations go loud." },
   Fixer: { name: "Operator", how: "Buy and sell through the underground. Rank sets what price categories of goods you can source (including illegal gear), lets you find buyers or sellers for nearly anything, and adds Rank to Trading checks in your network. You also maintain a contact web.", ranks: "Rank 4: source Expensive goods reliably. Rank 7: Very Expensive and restricted military gear. Rank 10: if it exists in Night City, you can get it." },
@@ -649,9 +649,10 @@ CPRED_DATA.roleAbilityDetails = {
 CPRED_DATA.roleSubAbilities = {
   Tech: {
     ability: "Maker",
-    note: "Distribute your Maker Rank among these four specialties. Each specialty adds its level as a bonus to those checks and gates the size of job you can attempt.",
+    perRank: 2,   // each Maker Rank grants 1 Rank in TWO different Specialties
+    note: "Each time your Maker Rank goes up by 1 you gain 1 Rank in two different Specialties, so you have twice your Maker Rank to spend — and because a single Rank-up can only ever give one Rank to any one Specialty, no Specialty can exceed your Maker Rank.",
     subs: [
-      ["Field Expertise", "Repair and jury-rig existing tech"],
+      ["Field Expertise", "Repair and jury-rig tech in the field. Adds its Rank to Basic Tech, Cybertech, Electronics/Security Tech, Weaponstech and Land/Sea/Air Vehicle Tech checks made for any non-Maker purpose — the sheet applies this automatically."],
       ["Upgrade Expertise", "Improve items — add a feature or raise quality tier"],
       ["Fabrication Expertise", "Build items from scratch"],
       ["Invention Expertise", "Invent entirely new items"]
@@ -659,13 +660,65 @@ CPRED_DATA.roleSubAbilities = {
   },
   Medtech: {
     ability: "Medicine",
-    note: "Distribute your Medicine Rank among these three areas. Surgery level gates which Critical Injuries you can treat.",
+    // Corebook pg. 149: "Whenever the Medtech increases their Medicine Rank,
+    // they also choose ONE of the following three Medicine Specialties ... to
+    // allocate 1 point to." One point per Rank — NOT two like Maker.
+    perRank: 1,
+    note: "Each time your Medicine Rank goes up by 1 you choose one of the three Specialties below and put 1 point into it — so you have exactly your Medicine Rank in points to spend (Corebook pg. 149).",
     subs: [
-      ["Surgery", "Treat Critical Injuries needing surgery; stabilize the dying"],
-      ["Pharmaceuticals", "Craft drugs and antidotes"],
-      ["Cryosystem Operation", "Run cryopumps and cryotanks to hold the near-dead"]
+      ["Surgery", "Every point gives you 2 points of the Surgery Skill (to a maximum of 10). Surgery is the TECH Skill used to treat the most severe Critical Injuries and to implant cyberware, and is only available to Medtechs through this Specialty."],
+      ["Pharmaceuticals", "Every point gives you 1 point of the Medical Tech Skill and access to one pharmaceutical from the table below.",
+        { label: "Medical Tech (Pharmaceuticals)", max: 5 }],
+      ["Cryosystem Operation", "Every point gives you 1 point of the Medical Tech Skill and the cryo equipment listed in the table below.",
+        { label: "Medical Tech (Cryosystem Operation)", max: 5 }]
     ]
   }
+};
+
+// Medtech Medicine reference tables — Corebook pg. 149-150.
+CPRED_DATA.medtechTables = {
+  // "For every point you allocate to Surgery, you gain 2 points in the
+  // Surgery Skill (up to a maximum of 10)."
+  surgerySkillPerPoint: 2,
+  surgerySkillMax: 10,
+  // Pharmaceuticals and Cryosystem Operation both feed the same skill:
+  // "Your Medical Tech Skill Level equals your points in Pharmaceuticals
+  // plus your points in CryoSystem Operation."
+  medicalTechSkillMax: 10,
+  pharmaceuticals: [
+    { name: "Antibiotic", effect: "A target who has already started the natural healing process heals an extra 2 Hit Points every day for a week. A person can only benefit from one use of Antibiotic at a time." },
+    { name: "Rapidetox", effect: "A target affected by a drug, poison, or intoxicant is immediately purged of the effects of that substance." },
+    { name: "Speedheal", effect: "A target who is not Mortally Wounded immediately heals HP equal to their BODY + WILL. One use per day." },
+    { name: "Stim", effect: "A target can ignore all penalties from being Seriously Wounded for an hour. One use per day." },
+    { name: "Surge", effect: "A target can function unimpaired without sleep for a full 24 hours. One use per week." }
+  ],
+  pharmaNotes: [
+    "Each point in this Specialty grants access to one pharmaceutical of your choice.",
+    "Synthesis: DV13 Medical Tech Check. A failure wastes the materials. 200eb of materials makes a number of doses equal to your Medical Tech Skill, in 1 hour.",
+    "Applying a dose takes an Action. An unwilling target can be dosed with a Melee Weapon Attack using an Airhypo, which administers the dose on a hit instead of dealing damage.",
+    "Street Drugs cannot be synthesized with this Specialty, and a non-Medtech cannot administer pharmaceuticals correctly."
+  ],
+  cryosystem: [
+    { level: 1, benefit: "You gain one Cryopump." },
+    { level: 2, benefit: "You become a Registered Cryotank Technician and gain unlimited 24/7 access to 1 Cryotank at a time at any cryotank facility operated by medical corporations or government agencies." },
+    { level: 3, benefit: "You gain 1 Cryotank, installed in a room of your choosing." },
+    { level: 4, benefit: "You gain 2 more Cryotanks that fit in the same room as your first, and your Cryopump has 2 charges with a maximum carrying capacity of 2 people in stasis." },
+    { level: 5, benefit: "You gain 3 more Cryotanks that fit in the same room as the first three, and your Cryopump has 3 charges with a maximum carrying capacity of 3 people in stasis." }
+  ],
+  cryoNote: "More information on Cryopumps and Cryotanks is on Corebook pg. 353."
+};
+
+// Role Ability bonuses that land on specific skill checks. Applied
+// automatically wherever a skill total is shown.
+// Tech/Maker — Field Expertise adds its Rank to these Tech skills when the
+// check is made for a NON-Maker purpose (matched by prefix so the "(x2)"
+// suffix on Electronics/Security Tech still resolves).
+CPRED_DATA.roleSkillBonuses = {
+  Tech: [{
+    sub: 'Field Expertise',
+    match: /^(Basic Tech|Cybertech|Electronics\/Security Tech|Weaponstech|Land Vehicle Tech|Sea Vehicle Tech|Air Vehicle Tech)\b/,
+    note: 'non-Maker purposes only'
+  }]
 };
 
 // Stat/skill modifiers applied automatically when the item is installed/equipped
@@ -1331,7 +1384,7 @@ function blank() {
   return { id: String(Date.now()), name: 'New Edgerunner', handle: '', role: 'Solo',
     age: 25, gender: '', aliases: '', rep: 0, roleAbilityRank: 4, roleSubRanks: {}, trackerIP: 0,
     stats: { INT:5, REF:5, DEX:5, TECH:5, COOL:5, WILL:5, LUCK:5, MOVE:5, BODY:5, EMP:5 },
-    skills: {}, skillSpecs: {}, eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
+    skills: {}, skillSpecs: {}, skillMods: {}, medtechDrugs: [], eddies: 500, hp: 40, maxHp: 40, wounds: 0, notes: '', lifepath: {}, portrait: null,
     weapons: [], armorList: [], armor: { head:'', headSP:0, body:'', bodySP:0, shield:'', shieldSP:0 },
     cyberware: [], gear: [], netPrograms: [], vehicles: [], updatedAt: Date.now() };
 }
@@ -1340,8 +1393,9 @@ function blank() {
 function normalize(c) {
   const b = blank();
   Object.keys(b).forEach(k => { if (c[k] === undefined || c[k] === null) c[k] = b[k]; });
-  ['weapons','armorList','cyberware','gear','netPrograms','vehicles'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
+  ['weapons','armorList','cyberware','gear','netPrograms','vehicles','medtechDrugs'].forEach(k => { if (!Array.isArray(c[k])) c[k] = []; });
   if (typeof c.skills !== 'object' || Array.isArray(c.skills)) c.skills = {};
+  if (typeof c.skillMods !== 'object' || Array.isArray(c.skillMods)) c.skillMods = {};
   if (typeof c.lifepath !== 'object') c.lifepath = {};
   if (typeof c.armor !== 'object') c.armor = b.armor;
   return c;
@@ -1406,6 +1460,39 @@ function effSkillMods(c) {
   return out;
 }
 
+// Equipment + role-ability bonuses, with a per-source breakdown for the
+// MOD cell's tooltip → { skillName: { total, parts: [...] } }
+function autoSkillModDetail(c) {
+  const out = {};
+  const add = (name, amt, label) => {
+    if (!amt) return;
+    if (!out[name]) out[name] = { total: 0, parts: [] };
+    out[name].total += amt;
+    out[name].parts.push(`${label} ${amt > 0 ? '+' : ''}${amt}`);
+  };
+  Object.entries(effSkillMods(c)).forEach(([n, a]) => add(n, a, 'Equipment'));
+  ((CPRED_DATA.roleSkillBonuses || {})[c.role] || []).forEach(b => {
+    const rankInSub = (c.roleSubRanks && parseInt(c.roleSubRanks[b.sub])) || 0;
+    if (!rankInSub) return;
+    Object.values(CPRED_DATA.skills).flat().forEach(sk => { if (b.match.test(sk.name)) add(sk.name, rankInSub, b.sub); });
+  });
+  return out;
+}
+
+function autoSkillMod(detail, name) { return (detail[name] && detail[name].total) || 0; }
+function autoSkillModWhy(detail, name) {
+  return detail[name] ? detail[name].parts.join(' · ') : 'No automatic modifiers';
+}
+
+function roleSkillModList(c) {
+  return ((CPRED_DATA.roleSkillBonuses || {})[c.role] || []).map(b => {
+    const rankInSub = (c.roleSubRanks && parseInt(c.roleSubRanks[b.sub])) || 0;
+    if (!rankInSub) return null;
+    const names = Object.values(CPRED_DATA.skills).flat().filter(sk => b.match.test(sk.name)).map(sk => sk.name);
+    return `${b.sub} +${rankInSub} to ${names.join(', ')}${b.note ? ` (${b.note})` : ''}`;
+  }).filter(Boolean);
+}
+
 function effStats(c) {
   const eff = { ...c.stats };
   const notes = [];
@@ -1446,9 +1533,20 @@ function equipmentModList(c) {
   return out;
 }
 
+// A piece of chrome carries the HL the GM app settled on it (hlActual) when
+// there is one — the book's "7 (2d6)" is only the default until someone rolls.
+function cwHL(cw) {
+  if (cw && cw.hlActual !== undefined && cw.hlActual !== null && cw.hlActual !== '') {
+    const n = parseInt(cw.hlActual, 10);
+    if (!isNaN(n)) return Math.max(0, n);
+  }
+  const m = String((cw && cw.hl) || '').match(/\d+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+
 function totalHL(c) {
   let t = 0;
-  (c.cyberware || []).forEach(cw => { const m = String(cw.hl || '').match(/\d+/); if (m) t += parseInt(m[0]); });
+  (c.cyberware || []).forEach(cw => { t += cwHL(cw); });
   return t;
 }
 
@@ -1613,15 +1711,53 @@ function fillRoleBlurb() {
 }
 
 // ── Role Ability sub-allocation (Tech/Maker, Medtech/Medicine) ───────
+// A Rank-up grants 1 Rank in `perRank` DIFFERENT specialties (Maker gives two,
+// Medicine gives one), so the pool is rank × perRank. Either way a single
+// specialty gains at most 1 point per Rank-up, so none may exceed the rank —
+// and some specialties carry their own hard cap on top of that.
+function roleSubBudget(cfg, rank) {
+  return { pool: rank * (cfg.perRank || 1), cap: rank };
+}
+
+function roleSubCap(cfg, rank, subName) {
+  const entry = cfg.subs.find(([name]) => name === subName);
+  const hardMax = entry && entry[2] && entry[2].max;
+  return Math.min(rank, hardMax === undefined ? Infinity : hardMax);
+}
+
 function setRoleSubRank(sub, val, rerender) {
   if (!cur.roleSubRanks) cur.roleSubRanks = {};
   const cfg = CPRED_DATA.roleSubAbilities[cur.role];
   if (!cfg) return;
   const rank = cur.roleAbilityRank || 4;
-  let v = Math.max(0, parseInt(val) || 0);
+  const { pool } = roleSubBudget(cfg, rank);
+  let v = Math.min(roleSubCap(cfg, rank, sub), Math.max(0, parseInt(val) || 0));
   const otherUsed = cfg.subs.reduce((t, [name]) => name === sub ? t : t + (cur.roleSubRanks[name] || 0), 0);
-  if (v + otherUsed > rank) v = Math.max(0, rank - otherUsed);
+  if (v + otherUsed > pool) v = Math.max(0, pool - otherUsed);
   cur.roleSubRanks[sub] = v;
+  save();
+  if (rerender && typeof window[rerender] === 'function') window[rerender]();
+}
+
+// Medtech: Surgery Skill = 2 per Surgery point; Medical Tech Skill =
+// Pharmaceuticals points + Cryosystem Operation points. Both cap at 10.
+function medtechDerived(c) {
+  const t = CPRED_DATA.medtechTables;
+  const pts = n => (c.roleSubRanks && parseInt(c.roleSubRanks[n])) || 0;
+  const surgeryPts = pts('Surgery'), pharmaPts = pts('Pharmaceuticals'), cryoPts = pts('Cryosystem Operation');
+  return {
+    surgeryPts, pharmaPts, cryoPts,
+    surgerySkill: Math.min(t.surgerySkillMax, surgeryPts * t.surgerySkillPerPoint),
+    surgeryCapped: surgeryPts * t.surgerySkillPerPoint > t.surgerySkillMax,
+    medicalTechSkill: Math.min(t.medicalTechSkillMax, pharmaPts + cryoPts)
+  };
+}
+
+function toggleMedtechDrug(name, rerender) {
+  if (!Array.isArray(cur.medtechDrugs)) cur.medtechDrugs = [];
+  const i = cur.medtechDrugs.indexOf(name);
+  if (i >= 0) cur.medtechDrugs.splice(i, 1);
+  else if (cur.medtechDrugs.length < medtechDerived(cur).pharmaPts) cur.medtechDrugs.push(name);
   save();
   if (rerender && typeof window[rerender] === 'function') window[rerender]();
 }
@@ -1631,21 +1767,78 @@ function roleSubAllocHTML(rerender) {
   if (!cfg) return '';
   if (!cur.roleSubRanks) cur.roleSubRanks = {};
   const rank = cur.roleAbilityRank || 4;
+  const { pool } = roleSubBudget(cfg, rank);
   const used = cfg.subs.reduce((t, [name]) => t + (cur.roleSubRanks[name] || 0), 0);
-  const remaining = rank - used;
+  const remaining = pool - used;
   const remColor = remaining < 0 ? 'var(--red)' : remaining > 0 ? 'var(--gold)' : 'var(--green)';
   return `
-    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px">Distribute ${cfg.ability} Rank (${rank} pts) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px">Distribute ${cfg.ability} Specialty Ranks (${pool} pt${pool === 1 ? '' : 's'} at Rank ${rank}) — <span style="color:${remColor}">${remaining} remaining</span></div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.5;margin-bottom:6px">${cfg.note}</div>
     <div class="grid2">
-      ${cfg.subs.map(([name, desc]) => `
+      ${cfg.subs.map(([name, desc, opts]) => {
+        const subCap = roleSubCap(cfg, rank, name);
+        return `
         <div style="background:var(--mid);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${name}</span>
-            <input type="number" min="0" max="${rank}" value="${cur.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+            <span style="font-family:'Orbitron',monospace;font-size:10px;color:var(--gold)">${(opts && opts.label) || name}</span>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <span style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">max ${subCap}</span>
+              <input type="number" min="0" max="${subCap}" value="${cur.roleSubRanks[name]||0}" style="width:46px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--neon);font-family:'Orbitron',monospace;font-size:14px;padding:2px" oninput="setRoleSubRank('${name.replace(/'/g,"\\'")}', this.value, '${rerender||''}')">
+            </div>
           </div>
           <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5">${desc}</div>
+        </div>`; }).join('')}
+    </div>
+    ${cur.role === 'Medtech' ? medtechMedicineHTML(rerender) : ''}`;
+}
+
+// Medtech Medicine detail: granted skills + the three Specialty tables
+function medtechMedicineHTML(rerender) {
+  const t = CPRED_DATA.medtechTables;
+  const d = medtechDerived(cur);
+  const owned = Array.isArray(cur.medtechDrugs) ? cur.medtechDrugs : [];
+  const lbl = 'font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px';
+  const th = 'text-align:left;padding:4px 6px;font-family:\'Share Tech Mono\',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;border-bottom:1px solid var(--border)';
+  const td = 'padding:5px 6px;border-bottom:1px solid rgba(42,42,69,0.5);font-family:\'Share Tech Mono\',monospace;font-size:10px;color:#b0b0c8;line-height:1.5;vertical-align:top';
+
+  return `
+    <div style="${lbl}">Skills Granted By Your Specialties</div>
+    <div class="grid2">
+      ${[['Surgery Skill', d.surgerySkill, `${d.surgeryPts} × ${t.surgerySkillPerPoint}${d.surgeryCapped ? ' — capped at ' + t.surgerySkillMax : ' (max ' + t.surgerySkillMax + ')'}`],
+         ['Medical Tech Skill', d.medicalTechSkill, `Pharma ${d.pharmaPts} + Cryo ${d.cryoPts} (max ${t.medicalTechSkillMax})`]]
+        .map(([label, val, note]) => `
+        <div style="background:var(--mid);border:1px solid ${val > 0 ? 'var(--neon)' : 'var(--border)'};border-radius:4px;padding:8px 10px">
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px">${label}</div>
+          <div style="font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:${val > 0 ? 'var(--neon)' : 'var(--dim)'}">${val}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:2px">${note}</div>
         </div>`).join('')}
-    </div>`;
+    </div>
+
+    <div style="${lbl}">Medical Tech (Pharmaceuticals) — ${owned.length}/${d.pharmaPts} unlocked</div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.6;margin-bottom:6px">${t.pharmaNotes.map(n => '• ' + n).join('<br>')}</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th};width:24px"></th><th style="${th};width:88px">Drug</th><th style="${th}">Effect</th></tr></thead>
+      <tbody>${t.pharmaceuticals.map(p => {
+        const has = owned.includes(p.name);
+        const full = !has && owned.length >= d.pharmaPts;
+        return `<tr style="${has ? 'background:rgba(0,229,255,0.05)' : ''}">
+          <td style="${td};text-align:center"><input type="checkbox" ${has ? 'checked' : ''} ${full ? 'disabled' : ''} onchange="toggleMedtechDrug('${p.name}', '${rerender || ''}')"></td>
+          <td style="${td};color:${has ? 'var(--neon)' : 'var(--muted)'}">${p.name}</td>
+          <td style="${td}">${p.effect}</td></tr>`;
+      }).join('')}</tbody>
+    </table>
+
+    <div style="${lbl}">Medical Tech (Cryosystem Operation) — ${d.cryoPts} point${d.cryoPts === 1 ? '' : 's'}</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th style="${th};width:40px">Level</th><th style="${th}">Benefit</th></tr></thead>
+      <tbody>${t.cryosystem.map(r => {
+        const have = d.cryoPts >= r.level;
+        return `<tr style="${have ? 'background:rgba(0,229,255,0.05)' : 'opacity:.55'}">
+          <td style="${td};text-align:center;font-family:'Orbitron',monospace;font-weight:700;color:${have ? 'var(--neon)' : 'var(--dim)'}">${r.level}</td>
+          <td style="${td}">${r.benefit}</td></tr>`;
+      }).join('')}</tbody>
+    </table>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:6px">${t.cryoNote}</div>`;
 }
 
 // ── Sub-skill (specialization) fields ────────────────────────────────
@@ -1662,12 +1855,26 @@ function skillSpecInput(name) {
     oninput="setSkillSpec('${name.replace(/'/g, "\\'")}', this.value)">`;
 }
 
+// ── "Other" skill modifiers (same field the GM app shows) ────────────
+function otherSkillMod(c, name) {
+  const v = c && c.skillMods ? parseInt(c.skillMods[name]) : 0;
+  return isNaN(v) ? 0 : v;
+}
+
+function setOtherSkillMod(name, val) {
+  if (!cur.skillMods) cur.skillMods = {};
+  const n = parseInt(val);
+  if (!n || isNaN(n)) delete cur.skillMods[name];
+  else cur.skillMods[name] = n;
+  save(); renderCharSub();   // refresh whichever skill grid is on screen
+}
+
 // ── Stats & Skills (full grid, like the GM app) ──────────────────────
 function renderStatsSkills() {
   const { eff, statMods } = effStats(cur);
-  const skillMods = effSkillMods(cur);
+  const autoMods = autoSkillModDetail(cur);
   const hp = 10 + 5 * (eff.BODY || 5);
-  const modList = equipmentModList(cur);
+  const modList = equipmentModList(cur).concat(roleSkillModList(cur));
   document.getElementById('sub-stats-body').innerHTML = `
     <div class="grid5" style="margin-bottom:8px">
       ${CPRED_DATA.stats.map(s => {
@@ -1682,28 +1889,32 @@ function renderStatsSkills() {
     <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:${modList.length ? '6px' : '12px'}">
       HP ${hp} · Seriously Wounded ${Math.ceil(hp / 2)} · Death Save ${eff.BODY || 5} · Humanity ${curHumanity(cur)}/${(cur.stats.EMP || 5) * 10}
     </div>
-    ${modList.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green);background:rgba(105,240,174,0.06);border:1px solid rgba(105,240,174,0.25);border-radius:4px;padding:6px 8px;margin-bottom:12px;line-height:1.6">◆ Equipment modifiers: ${modList.join(' · ')}</div>` : ''}
+    ${modList.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green);background:rgba(105,240,174,0.06);border:1px solid rgba(105,240,174,0.25);border-radius:4px;padding:6px 8px;margin-bottom:12px;line-height:1.6">◆ Active modifiers: ${modList.join(' · ')}</div>` : ''}
     <div class="grid3">
       ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
         <div><div class="skill-cat">${cat}</div>
-          <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:38px;text-align:center">LVL</span><span style="width:22px;text-align:right">MOD</span><span style="width:22px;text-align:right">BASE</span></span></div>
+          <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:38px;text-align:center">LVL</span><span style="width:22px;text-align:right">MOD</span><span style="width:38px;text-align:center">OTHER</span><span style="width:22px;text-align:right">TOTAL</span></span></div>
           ${skills.map(sk => {
             const lvl = cur.skills[sk.name] || 0;
-            const mod = skillMods[sk.name] || 0;
-            const base = (eff[sk.stat] || 5) + lvl + mod;
-            const active = lvl > 0 || mod !== 0;
+            const mod = autoSkillMod(autoMods, sk.name);
+            const other = otherSkillMod(cur, sk.name);
+            const base = (eff[sk.stat] || 5) + lvl + mod + other;
+            const active = lvl > 0 || mod !== 0 || other !== 0;
             const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
             return `<div class="skill-row" ${active ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-              <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:48%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+              <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:40%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
               <span style="display:flex;align-items:center;gap:4px">
                 <input type="number" min="0" max="10" value="${lvl}" style="width:38px;text-align:center;font-size:10px;padding:2px"
                   onchange="setSkill('${sk.name.replace(/'/g, "\\'")}', this.value)">
-                <span title="Equipment MOD" style="width:22px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
-                <span style="width:22px;text-align:right;${mod !== 0 ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
+                <span title="${autoSkillModWhy(autoMods, sk.name)}" style="width:22px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
+                <input type="number" value="${other || ''}" placeholder="0" title="Other modifiers — adds to the total"
+                  style="width:38px;text-align:center;font-size:10px;padding:2px;color:${other ? 'var(--gold)' : 'inherit'}"
+                  onchange="setOtherSkillMod('${sk.name.replace(/'/g, "\\'")}', this.value)">
+                <span style="width:22px;text-align:right;${(mod !== 0 || other !== 0) ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
               </span></div>`;
           }).join('')}</div>`).join('')}
     </div>
-    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is the equipment bonus. BASE = effective STAT + level + MOD.</div>`;
+    <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:8px">MOD is worked out from your equipment and role ability — tap and hold it for the breakdown. OTHER is anything else you want to add. TOTAL = effective STAT + LVL + MOD + OTHER.</div>`;
 }
 
 function setSkill(name, v) {
@@ -1814,7 +2025,7 @@ function edI(path, val, opts = {}) {
 function renderSheet() {
   const el = document.getElementById('sub-sheet');
   const { eff, notes, statMods } = effStats(cur);
-  const skillMods = effSkillMods(cur);
+  const autoMods = autoSkillModDetail(cur);
   const hp = 10 + 5 * (eff.BODY || 5);
   const hl = totalHL(cur);
   const hum = curHumanity(cur);
@@ -1851,7 +2062,7 @@ function renderSheet() {
       </div>
     </div>
 
-    ${(() => { const ml = equipmentModList(cur); return ml.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green)">◆ Equipment modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
+    ${(() => { const ml = equipmentModList(cur).concat(roleSkillModList(cur)); return ml.length ? `<div class="cs-section" style="padding:8px 14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--green)">◆ Modifiers active: ${ml.join(' · ')}</div>` : ''; })()}
 
     <div class="cs-section">
       <div class="cs-title">Stats (base — effective shown when modified)</div>
@@ -1894,24 +2105,28 @@ function renderSheet() {
     </div>
 
     <div class="cs-section">
-      <div class="cs-title">Skills — every level editable · MOD = equipment bonus (bold = modified)</div>
+      <div class="cs-title">Skills — LVL and OTHER editable · MOD = equipment + role bonuses (bold = modified)</div>
       <div class="grid3">
         ${Object.entries(CPRED_DATA.skills).map(([cat, skills]) => `
           <div><div class="skill-cat">${cat}</div>
-            <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:36px;text-align:center">LVL</span><span style="width:20px;text-align:right">MOD</span><span style="width:22px;text-align:right">BASE</span></span></div>
+            <div class="skill-row" style="opacity:.6"><span style="font-size:8px;letter-spacing:1px">SKILL</span><span style="display:flex;gap:4px;font-size:8px;letter-spacing:1px"><span style="width:36px;text-align:center">LVL</span><span style="width:20px;text-align:right">MOD</span><span style="width:36px;text-align:center">OTHER</span><span style="width:22px;text-align:right">TOTAL</span></span></div>
             ${skills.map(sk => {
               const lvl = cur.skills[sk.name] || 0;
-              const mod = skillMods[sk.name] || 0;
-              const base = (eff[sk.stat] || 5) + lvl + mod;
-              const active = lvl > 0 || mod !== 0;
+              const mod = autoSkillMod(autoMods, sk.name);
+              const other = otherSkillMod(cur, sk.name);
+              const base = (eff[sk.stat] || 5) + lvl + mod + other;
+              const active = lvl > 0 || mod !== 0 || other !== 0;
               const spec = SPEC_SKILL_RE.test(sk.name) && lvl > 0;
               return `<div class="skill-row" ${active ? 'style="background:rgba(0,229,255,0.04)"' : ''}>
-                <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:44%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
+                <span style="${mod !== 0 ? 'color:var(--green);font-weight:800;' : lvl > 0 ? 'color:var(--neon);' : ''}overflow:hidden;max-width:36%" title="${sk.name} (${sk.stat})">${sk.name}${spec ? skillSpecInput(sk.name) : ''}</span>
                 <span style="display:flex;align-items:center;gap:4px">
                   <input type="number" min="0" max="10" value="${lvl}" style="width:36px;text-align:center;font-size:10px;padding:1px"
                     onchange="setSkillSheet('${sk.name.replace(/'/g, "\\'")}', this.value)">
-                  <span title="Equipment MOD" style="width:20px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
-                  <span style="width:22px;text-align:right;${mod !== 0 ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
+                  <span title="${autoSkillModWhy(autoMods, sk.name)}" style="width:20px;text-align:right;color:${mod > 0 ? 'var(--green)' : mod < 0 ? 'var(--red)' : 'var(--dim)'}">${mod ? (mod > 0 ? '+' + mod : mod) : '·'}</span>
+                  <input type="number" value="${other || ''}" placeholder="0" title="Other modifiers — adds to the total"
+                    style="width:36px;text-align:center;font-size:10px;padding:1px;color:${other ? 'var(--gold)' : 'inherit'}"
+                    onchange="setOtherSkillMod('${sk.name.replace(/'/g, "\\'")}', this.value)">
+                  <span style="width:22px;text-align:right;${(mod !== 0 || other !== 0) ? 'font-weight:800;color:var(--green)' : 'color:var(--gold)'}">${active ? base : '—'}</span>
                 </span></div>`;
             }).join('')}</div>`).join('')}
       </div>
@@ -1930,7 +2145,7 @@ function renderSheet() {
         ${cur.cyberware.map((c, i) => `<div style="background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:7px 10px;position:relative">
           <button class="btn btn-red btn-xs" style="position:absolute;top:4px;right:4px" onclick="cur.cyberware.splice(${i},1);save();renderSheet()">✕</button>
           <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon);padding-right:24px">${c.name}</div>
-          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl || '—'}${CPRED_DATA.itemMods[c.name] ? ' · ' + (CPRED_DATA.itemMods[c.name].skillNote || CPRED_DATA.itemMods[c.name].note || 'stat mod') : ''}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${cwHL(c)}${c.hlActual !== undefined && c.hlActual !== null && c.hlActual !== '' ? ' <span style="color:var(--gold)">(set)</span> · book ' + (c.hl || '—') : ''}${CPRED_DATA.itemMods[c.name] ? ' · ' + (CPRED_DATA.itemMods[c.name].skillNote || CPRED_DATA.itemMods[c.name].note || 'stat mod') : ''}</div>
           ${(c.upgrades || []).length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px;padding-right:24px">◆ ${c.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '')).join(' · ')}</div>` : ''}
         </div>`).join('')}</div></div>` : ''}
 
