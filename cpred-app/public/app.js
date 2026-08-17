@@ -2452,6 +2452,25 @@ function totalHL(c) {
   return t;
 }
 
+// The dice hiding inside a catalogue HL string. Every shape the sourcebooks
+// use: "7 (2d6)", "3 (1d6)", "14 (3d6)", "2 (1d6/2 round up)" and the
+// abbreviated "2 (1d6/2)" — halving always rounds up, which is the rule the
+// long form spells out. Anything else (a flat "0", a custom piece with prose)
+// has nothing to roll and returns null.
+function parseHLDice(hl) {
+  const m = String(hl || '').match(/(\d+)d(\d+)\s*(\/\s*2)?/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10), sides = parseInt(m[2], 10);
+  if (!n || !sides) return null;
+  return { n, sides, half: !!m[3] };
+}
+
+function rollHLDice(dice) {
+  let sum = 0, rolls = [];
+  for (let k = 0; k < dice.n; k++) { const r = 1 + Math.floor(Math.random() * dice.sides); rolls.push(r); sum += r; }
+  return { total: dice.half ? Math.ceil(sum / 2) : sum, rolls };
+}
+
 function currentHumanity(c) { return Math.max(0, ((c.stats.EMP || 5) * 10) - totalHL(c)); }
 
 // ── OVERRIDE: equipment browsers now show Buy / Add Free ───────────
@@ -3362,6 +3381,7 @@ function renderFullSheet() {
               title="Humanity Loss this character actually took for this piece. Catalogue says ${psEsc(c.hl || '—')}."
               style="width:42px;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--red);font-size:9px;padding:1px 2px"
               onchange="setCWHL(${i}, this.value)">
+            ${parseHLDice(c.hl) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Roll ${psEsc(c.hl)} and keep the result" onclick="rollCWHL(${i})">🎲</button>` : ''}
             ${cwHLEdited(c) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Back to the catalogue value (${psEsc(c.hl || '—')})" onclick="resetCWHL(${i})">↺</button>` : ''}
             <span>${cwHLEdited(c) ? `<span style="color:var(--gold)">edited</span> · book ${psEsc(c.hl || '—')}` : psEsc(c.hl || '—')}${CPRED_DATA.itemMods[c.name]?' · '+(CPRED_DATA.itemMods[c.name].skillNote||CPRED_DATA.itemMods[c.name].note||'stat mod'):''}</span>
           </div>
@@ -3783,6 +3803,7 @@ function renderInstalledCW() {
                 title="Humanity Loss this character actually took for this piece. Catalogue says ${psEsc(c.hl || '—')}."
                 style="width:42px;text-align:center;background:var(--mid);border:1px solid var(--border);color:var(--red);font-size:9px;padding:1px 2px"
                 onchange="setCWHL(${i}, this.value)">
+              ${parseHLDice(c.hl) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Roll ${psEsc(c.hl)} and keep the result" onclick="rollCWHL(${i})">🎲</button>` : ''}
               ${cwHLEdited(c) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Back to the catalogue value (${psEsc(c.hl || '—')})" onclick="resetCWHL(${i})">↺</button>` : ''}
               <span>${cwHLEdited(c) ? `<span style="color:var(--gold)">edited</span> · book ${psEsc(c.hl || '—')}` : psEsc(c.hl || '—')} | ${psEsc(c.install || '—')}${slot?' | maps to '+CW_SLOT_LABEL[slot]:''}</span>
             </div>
@@ -3844,6 +3865,22 @@ function resetCWHL(i) {
   if (!cw) return;
   delete cw.hlActual;
   afterCWHLChange(cw.name);
+}
+
+// Roll the catalogue's dice for one piece and keep the result as its HL.
+function rollCWHL(i) {
+  const cw = char.cyberware[i];
+  if (!cw) return;
+  const dice = parseHLDice(cw.hl);
+  if (!dice) { notify(`${cw.name} has no dice to roll — HL is a flat ${cwHL(cw)}`, ''); return; }
+  const { total, rolls } = rollHLDice(dice);
+  cw.hlActual = total;
+  saveToLocalStorage();
+  renderInstalledCW();
+  if (activeSection === 'sheet') renderFullSheet();
+  if (activeSection === 'stats') renderStatsView();
+  const expr = `${dice.n}d${dice.sides}${dice.half ? '/2' : ''}`;
+  notify(`${cw.name}: ${expr} → [${rolls.join(', ')}] = ${total} HL · Humanity ${currentHumanity(char)}/${(char.stats.EMP||5)*10}`, currentHumanity(char) < 20 ? 'error' : 'success');
 }
 
 // One HL edit moves total HL and current Humanity, so the other views that
