@@ -249,9 +249,20 @@ function equipmentModList(c) {
   return out;
 }
 
+// A piece of chrome carries the HL the GM app settled on it (hlActual) when
+// there is one — the book's "7 (2d6)" is only the default until someone rolls.
+function cwHL(cw) {
+  if (cw && cw.hlActual !== undefined && cw.hlActual !== null && cw.hlActual !== '') {
+    const n = parseInt(cw.hlActual, 10);
+    if (!isNaN(n)) return Math.max(0, n);
+  }
+  const m = String((cw && cw.hl) || '').match(/\d+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+
 function totalHL(c) {
   let t = 0;
-  (c.cyberware || []).forEach(cw => { const m = String(cw.hl || '').match(/\d+/); if (m) t += parseInt(m[0]); });
+  (c.cyberware || []).forEach(cw => { t += cwHL(cw); });
   return t;
 }
 
@@ -850,7 +861,7 @@ function renderSheet() {
         ${cur.cyberware.map((c, i) => `<div style="background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:7px 10px;position:relative">
           <button class="btn btn-red btn-xs" style="position:absolute;top:4px;right:4px" onclick="cur.cyberware.splice(${i},1);save();renderSheet()">✕</button>
           <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon);padding-right:24px">${c.name}</div>
-          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl || '—'}${CPRED_DATA.itemMods[c.name] ? ' · ' + (CPRED_DATA.itemMods[c.name].skillNote || CPRED_DATA.itemMods[c.name].note || 'stat mod') : ''}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${cwHL(c)}${c.hlActual !== undefined && c.hlActual !== null && c.hlActual !== '' ? ' <span style="color:var(--gold)">(set)</span> · book ' + (c.hl || '—') : ''}${CPRED_DATA.itemMods[c.name] ? ' · ' + (CPRED_DATA.itemMods[c.name].skillNote || CPRED_DATA.itemMods[c.name].note || 'stat mod') : ''}</div>
           ${(c.upgrades || []).length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px;padding-right:24px">◆ ${c.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '')).join(' · ')}</div>` : ''}
         </div>`).join('')}</div></div>` : ''}
 
