@@ -1529,7 +1529,7 @@ function buildPrintSheetHTML(c, fit = {}) {
   // empty list on a sheet about to be printed is not "no cyberware", it is room
   // to write cyberware in. The paper sheet is ruled space for exactly this.
   const cyber = `<section><h2>Cyberware &nbsp;<span style="font-weight:400">HL ${hl} · Humanity ${hum}/${maxHum}</span></h2>
-    ${c.cyberware.length ? c.cyberware.map(cw => `<div class="cw"><span class="n">${psEsc(cw.name)}</span><span class="h">HL ${psEsc(cw.hl ?? 0)}</span></div>
+    ${c.cyberware.length ? c.cyberware.map(cw => `<div class="cw"><span class="n">${psEsc(cw.name)}</span><span class="h">HL ${cwHL(cw)}</span></div>
       ${(cw.upgrades || []).length ? `<div class="it"><div class="up">${cw.upgrades.map(u => psEsc('◆ ' + u.name + (u.effect ? ' — ' + u.effect : ''))).join('<br>')}</div></div>` : ''}`).join('')
       : psRules(6)}
   </section>`;
@@ -2426,10 +2426,49 @@ function effectiveStats(c) {
   return { eff, notes, statMods };
 }
 
+// The book prints Humanity Loss as a dice expression — "7 (2d6)" — so what a
+// character actually paid is settled at the ripperdoc's table, not in the
+// catalogue. hlActual is that settled number when someone has set it; the
+// catalogue string is only the default until then.
+function cwHL(cw) {
+  if (cw && cw.hlActual !== undefined && cw.hlActual !== null && cw.hlActual !== '') {
+    const n = parseInt(cw.hlActual, 10);
+    if (!isNaN(n)) return Math.max(0, n);
+  }
+  const m = String((cw && cw.hl) || '').match(/\d+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+
+// True once the HL has been moved off whatever the catalogue said.
+function cwHLEdited(cw) {
+  if (!cw || cw.hlActual === undefined || cw.hlActual === null || cw.hlActual === '') return false;
+  const m = String(cw.hl || '').match(/\d+/);
+  return cwHL(cw) !== (m ? parseInt(m[0], 10) : 0);
+}
+
 function totalHL(c) {
   let t = 0;
-  (c.cyberware || []).forEach(cw => { const m = String(cw.hl || '').match(/\d+/); if (m) t += parseInt(m[0]); });
+  (c.cyberware || []).forEach(cw => { t += cwHL(cw); });
   return t;
+}
+
+// The dice hiding inside a catalogue HL string. Every shape the sourcebooks
+// use: "7 (2d6)", "3 (1d6)", "14 (3d6)", "2 (1d6/2 round up)" and the
+// abbreviated "2 (1d6/2)" — halving always rounds up, which is the rule the
+// long form spells out. Anything else (a flat "0", a custom piece with prose)
+// has nothing to roll and returns null.
+function parseHLDice(hl) {
+  const m = String(hl || '').match(/(\d+)d(\d+)\s*(\/\s*2)?/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10), sides = parseInt(m[2], 10);
+  if (!n || !sides) return null;
+  return { n, sides, half: !!m[3] };
+}
+
+function rollHLDice(dice) {
+  let sum = 0, rolls = [];
+  for (let k = 0; k < dice.n; k++) { const r = 1 + Math.floor(Math.random() * dice.sides); rolls.push(r); sum += r; }
+  return { total: dice.half ? Math.ceil(sum / 2) : sum, rolls };
 }
 
 function currentHumanity(c) { return Math.max(0, ((c.stats.EMP || 5) * 10) - totalHL(c)); }
@@ -3336,7 +3375,16 @@ function renderFullSheet() {
         ${char.cyberware.map((c, i) => `<div style="background:var(--mid);border:1px solid var(--border);border-radius:3px;padding:7px 10px;position:relative">
           <button class="btn btn-xs btn-red" style="position:absolute;top:4px;right:4px" onclick="char.cyberware.splice(${i},1);saveToLocalStorage();renderFullSheet()">✕</button>
           <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon);padding-right:24px">${c.name}</div>
-          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl}${CPRED_DATA.itemMods[c.name]?' · '+(CPRED_DATA.itemMods[c.name].skillNote||CPRED_DATA.itemMods[c.name].note||'stat mod'):''}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim);display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:3px">
+            <span>HL</span>
+            <input type="number" min="0" step="1" value="${cwHL(c)}"
+              title="Humanity Loss this character actually took for this piece. Catalogue says ${psEsc(c.hl || '—')}."
+              style="width:42px;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--red);font-size:9px;padding:1px 2px"
+              onchange="setCWHL(${i}, this.value)">
+            ${parseHLDice(c.hl) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Roll ${psEsc(c.hl)} and keep the result" onclick="rollCWHL(${i})">🎲</button>` : ''}
+            ${cwHLEdited(c) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Back to the catalogue value (${psEsc(c.hl || '—')})" onclick="resetCWHL(${i})">↺</button>` : ''}
+            <span>${cwHLEdited(c) ? `<span style="color:var(--gold)">edited</span> · book ${psEsc(c.hl || '—')}` : psEsc(c.hl || '—')}${CPRED_DATA.itemMods[c.name]?' · '+(CPRED_DATA.itemMods[c.name].skillNote||CPRED_DATA.itemMods[c.name].note||'stat mod'):''}</span>
+          </div>
           ${c.upgrades && c.upgrades.length ? `<div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--gold);margin-top:3px;padding-right:24px">◆ ${c.upgrades.map(u => u.name + (u.effect ? ' — ' + u.effect : '') + (u.mods && modsToStr(u.mods) ? ' [' + modsToStr(u.mods) + ']' : '')).join(' · ')}</div>` : ''}
         </div>`).join('')}</div></div>` : ''}
 
@@ -3749,7 +3797,16 @@ function renderInstalledCW() {
         <div style="display:flex;justify-content:space-between;width:100%;align-items:center">
           <div>
             <div style="font-family:'Orbitron',monospace;font-size:9px;color:var(--neon)">${c.name}${c.custom?' <span class="badge badge-gold">custom</span>':''}</div>
-            <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim)">HL: ${c.hl||'—'} | ${c.install||'—'}${slot?' | maps to '+CW_SLOT_LABEL[slot]:''}</div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim);display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:2px">
+              <span>HL</span>
+              <input type="number" min="0" step="1" value="${cwHL(c)}"
+                title="Humanity Loss this character actually took for this piece. Catalogue says ${psEsc(c.hl || '—')}."
+                style="width:42px;text-align:center;background:var(--mid);border:1px solid var(--border);color:var(--red);font-size:9px;padding:1px 2px"
+                onchange="setCWHL(${i}, this.value)">
+              ${parseHLDice(c.hl) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Roll ${psEsc(c.hl)} and keep the result" onclick="rollCWHL(${i})">🎲</button>` : ''}
+              ${cwHLEdited(c) ? `<button class="btn btn-xs btn-ghost" style="padding:0 4px" title="Back to the catalogue value (${psEsc(c.hl || '—')})" onclick="resetCWHL(${i})">↺</button>` : ''}
+              <span>${cwHLEdited(c) ? `<span style="color:var(--gold)">edited</span> · book ${psEsc(c.hl || '—')}` : psEsc(c.hl || '—')} | ${psEsc(c.install || '—')}${slot?' | maps to '+CW_SLOT_LABEL[slot]:''}</span>
+            </div>
             ${locPicker}
           </div>
           <button class="btn btn-xs btn-red" onclick="removeCW(${i})">✕</button>
@@ -3759,8 +3816,7 @@ function renderInstalledCW() {
       </div>`;
     }).join('');
   }
-  let tHL = 0;
-  char.cyberware.forEach(c => { const m = String(c.hl||'').match(/\d+/); if (m) tHL += parseInt(m[0]); });
+  const tHL = totalHL(char);
   document.getElementById('total-hl').textContent = tHL;
   const maxHum = (char.stats.EMP || 5) * 10;
   document.getElementById('current-humanity').textContent = Math.max(0, maxHum - tHL);
@@ -3787,6 +3843,57 @@ function setCWLoc(i, val) {
   if (val) char.cyberware[i].bodyLoc = val; else delete char.cyberware[i].bodyLoc;
   saveToLocalStorage();
   renderInstalledCW();
+}
+
+// Set the Humanity Loss actually taken for one installed piece. Blank clears
+// the override and hands the item back to its catalogue value.
+function setCWHL(i, val) {
+  const cw = char.cyberware[i];
+  if (!cw) return;
+  const s = String(val).trim();
+  if (s === '') { delete cw.hlActual; }
+  else {
+    const n = parseInt(s, 10);
+    if (isNaN(n)) { notify('Humanity Loss must be a number', 'error'); }
+    else cw.hlActual = Math.max(0, n);
+  }
+  afterCWHLChange(cw && cw.name);
+}
+
+function resetCWHL(i) {
+  const cw = char.cyberware[i];
+  if (!cw) return;
+  delete cw.hlActual;
+  afterCWHLChange(cw.name);
+}
+
+// Roll the catalogue's dice for one piece and keep the result as its HL.
+function rollCWHL(i) {
+  const cw = char.cyberware[i];
+  if (!cw) return;
+  const dice = parseHLDice(cw.hl);
+  if (!dice) { notify(`${cw.name} has no dice to roll — HL is a flat ${cwHL(cw)}`, ''); return; }
+  const { total, rolls } = rollHLDice(dice);
+  cw.hlActual = total;
+  saveToLocalStorage();
+  renderInstalledCW();
+  if (activeSection === 'sheet') renderFullSheet();
+  if (activeSection === 'stats') renderStatsView();
+  const expr = `${dice.n}d${dice.sides}${dice.half ? '/2' : ''}`;
+  notify(`${cw.name}: ${expr} → [${rolls.join(', ')}] = ${total} HL · Humanity ${currentHumanity(char)}/${(char.stats.EMP||5)*10}`, currentHumanity(char) < 20 ? 'error' : 'success');
+}
+
+// One HL edit moves total HL and current Humanity, so the other views that
+// print them get re-rendered too — not just the list the edit happened in.
+// The session tracker is left alone: it reads saved character files, so it
+// picks the change up on its own next refresh.
+function afterCWHLChange(name) {
+  saveToLocalStorage();
+  renderInstalledCW();
+  if (activeSection === 'sheet') renderFullSheet();
+  if (activeSection === 'stats') renderStatsView();
+  const hum = currentHumanity(char);
+  notify(`${name || 'Cyberware'} — total HL ${totalHL(char)}, Humanity ${hum}/${(char.stats.EMP||5)*10}`, hum < 20 ? 'error' : 'success');
 }
 
 function renderBodyMap() {
